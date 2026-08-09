@@ -1,0 +1,350 @@
+package com.example.data.repository
+
+import android.content.Context
+import com.example.data.ai.GeminiRepository
+import com.example.data.local.*
+import com.example.data.markdown.MarkdownFileManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class WorkLogRepository(private val context: Context) {
+
+    private val db = AppDatabase.getInstance(context)
+    private val logDao = db.dailyWorkLogDao()
+    private val todoDao = db.todoItemDao()
+    private val profileDao = db.userCareerProfileDao()
+    private val settingsDao = db.userSettingsDao()
+    private val versionDao = db.experienceVersionDao()
+
+    val markdownManager = MarkdownFileManager(context)
+    val aiRepository = GeminiRepository()
+
+    // Flows for UI
+    val allLogsFlow: Flow<List<DailyWorkLogEntity>> = logDao.getAllLogs()
+    val allTodosFlow: Flow<List<TodoItemEntity>> = todoDao.getAllTodos()
+    val profileFlow: Flow<UserCareerProfileEntity?> = profileDao.getProfileFlow()
+    val settingsFlow: Flow<UserSettingsEntity?> = settingsDao.getSettingsFlow()
+    val workVersionsFlow: Flow<List<ExperienceVersionEntity>> = versionDao.getVersionsByTypeFlow("WORK")
+    val projectVersionsFlow: Flow<List<ExperienceVersionEntity>> = versionDao.getVersionsByTypeFlow("PROJECT")
+
+    fun getTodayString(): String {
+        return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    }
+
+    suspend fun getSettings(): UserSettingsEntity = withContext(Dispatchers.IO) {
+        settingsDao.getSettings() ?: UserSettingsEntity().also { settingsDao.saveSettings(it) }
+    }
+
+    suspend fun saveSettings(settings: UserSettingsEntity) = withContext(Dispatchers.IO) {
+        settingsDao.saveSettings(settings)
+    }
+
+    // --- Page 1: Raw Input Handling ---
+
+    suspend fun addRawNote(input: String, dateStr: String = getTodayString()) = withContext(Dispatchers.IO) {
+        if (input.isBlank()) return@withContext
+
+        // 1. Write to Type 2 Markdown File (temp/raw_notes.md)
+        markdownManager.appendRawNote(input, dateStr)
+
+        // 2. Update or insert in Room DB
+        val existing = logDao.getLogByDate(dateStr)
+        val newRaw = if (existing != null && existing.rawNotes.isNotBlank()) {
+            "${existing.rawNotes}\n• $input"
+        } else {
+            "• $input"
+        }
+
+        val updatedEntity = DailyWorkLogEntity(
+            date = dateStr,
+            rawNotes = newRaw,
+            summaryMarkdown = existing?.summaryMarkdown ?: "",
+            isSummarized = false,
+            updatedAt = System.currentTimeMillis()
+        )
+        logDao.insertOrUpdate(updatedEntity)
+    }
+
+    // --- AI Consolidation Engine (Manual or Scheduled) ---
+
+    suspend fun triggerAISummarize(
+        targetDate: String = getTodayString(),
+        onProgress: (String) -> Unit = {}
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            onProgress("正在读取待处理工作记录...")
+            val logEntity = logDao.getLogByDate(targetDate)
+            val rawContent = logEntity?.rawNotes.orEmpty().ifBlank {
+                markdownManager.getRawNotesContent()
+            }
+
+            if (rawContent.isBlank()) {
+                return@withContext Result.failure(Exception("【$targetDate】没有待整理的原始输入数据"))
+            }
+
+            val settings = getSettings()
+
+            // 1. AI Summarize Daily Work
+            onProgress("AI 正在提炼【$targetDate】工作日志与总结...")
+            val summaryRes = aiRepository.summarizeDailyWork(targetDate, rawContent, settings)
+            if (summaryRes.isFailure) {
+                return@withContext Result.failure(summaryRes.exceptionOrNull() ?: Exception("AI 总结失败"))
+            }
+            val summaryMarkdown = summaryRes.getOrDefault("# $targetDate 工作记录\n$rawContent")
+
+            // Write to Type 1 MD File (worklogs/YYYY-MM-DD.md)
+            markdownManager.writeDailySummary(targetDate, summaryMarkdown)
+
+            // Update Room
+            logDao.insertOrUpdate(
+                DailyWorkLogEntity(
+                    date = targetDate,
+                    rawNotes = rawContent,
+                    summaryMarkdown = summaryMarkdown,
+                    isSummarized = true,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+
+            // 2. Extract Todos
+            onProgress("AI 正在自动识别待办事项...")
+            val todosRes = aiRepository.extractTodos(targetDate, rawContent, settings)
+            if (todosRes.isSuccess) {
+                val extractedList = todosRes.getOrDefault(emptyList())
+                val entities = extractedList.map {
+                    TodoItemEntity(
+                        title = it.title,
+                        description = it.description,
+                        dateCreated = targetDate,
+                        priority = it.priority,
+                        category = it.category,
+                        sourceLogDate = targetDate
+                    )
+                }
+                if (entities.isNotEmpty()) {
+                    todoDao.insertTodos(entities)
+                }
+            }
+
+            // 3. AI Evaluate Career Profile Update
+            onProgress("AI 正在评估是否需要更新【用户职业履历】...")
+            val currentProfileText = markdownManager.getCareerProfileContent()
+            val evalRes = aiRepository.evaluateAndUpdateCareerProfile(currentProfileText, summaryMarkdown, settings)
+            if (evalRes.isSuccess) {
+                val evalObj = evalRes.getOrNull()
+                if (evalObj != null && evalObj.shouldUpdate) {
+                    onProgress("检测到新的关键技能/产出，正在更新职业履历文档...")
+                    markdownManager.writeCareerProfile(evalObj.updatedProfileMarkdown)
+                    profileDao.insertOrUpdateProfile(
+                        UserCareerProfileEntity(
+                            id = 1,
+                            markdownContent = evalObj.updatedProfileMarkdown,
+                            lastUpdated = System.currentTimeMillis()
+                        )
+                    )
+                } else {
+                    onProgress("工作履历评估完毕（无须大幅调整履历文档）")
+                }
+            }
+
+            // 4. Clear Type 2 temp raw notes after successful summary
+            onProgress("整理完毕，正在清理临时原始输入文档...")
+            markdownManager.clearRawNotesContent()
+
+            Result.success("【$targetDate】AI 工作日志整理完成！已更新总结、待办列表与职业文档。")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // --- Page 4: Resume & Profile Generation ---
+
+    suspend fun generateResume(templateStyle: String): Result<String> = withContext(Dispatchers.IO) {
+        val profileMd = markdownManager.getCareerProfileContent()
+        val settings = getSettings()
+        aiRepository.generateUserResume(profileMd, templateStyle, settings)
+    }
+
+    suspend fun generateWorkExperiences(): Result<String> = withContext(Dispatchers.IO) {
+        val profileMd = markdownManager.getCareerProfileContent()
+        val settings = getSettings()
+        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+
+        // Save old version if exists and no versions saved yet
+        val existingVersions = versionDao.getVersionsByType("WORK")
+        if (current.workExperiences.isNotBlank() && existingVersions.isEmpty()) {
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "WORK",
+                    content = current.workExperiences,
+                    timestamp = current.lastUpdated,
+                    summaryNote = "初始备份版本"
+                )
+            )
+        }
+
+        val res = aiRepository.generateWorkExperiences(profileMd, settings)
+        if (res.isSuccess) {
+            val content = res.getOrDefault("")
+            profileDao.insertOrUpdateProfile(current.copy(workExperiences = content, lastUpdated = System.currentTimeMillis()))
+            // Save new version
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "WORK",
+                    content = content,
+                    timestamp = System.currentTimeMillis(),
+                    summaryNote = "AI 提炼版本"
+                )
+            )
+        }
+        res
+    }
+
+    suspend fun generateProjectExperiences(): Result<String> = withContext(Dispatchers.IO) {
+        val profileMd = markdownManager.getCareerProfileContent()
+        val settings = getSettings()
+        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+
+        // Save old version if exists and no versions saved yet
+        val existingVersions = versionDao.getVersionsByType("PROJECT")
+        if (current.projectExperiences.isNotBlank() && existingVersions.isEmpty()) {
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "PROJECT",
+                    content = current.projectExperiences,
+                    timestamp = current.lastUpdated,
+                    summaryNote = "初始备份版本"
+                )
+            )
+        }
+
+        val res = aiRepository.generateProjectExperiences(profileMd, settings)
+        if (res.isSuccess) {
+            val content = res.getOrDefault("")
+            profileDao.insertOrUpdateProfile(current.copy(projectExperiences = content, lastUpdated = System.currentTimeMillis()))
+            // Save new version
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "PROJECT",
+                    content = content,
+                    timestamp = System.currentTimeMillis(),
+                    summaryNote = "AI 提取版本"
+                )
+            )
+        }
+        res
+    }
+
+    suspend fun restoreExperienceVersion(version: ExperienceVersionEntity) = withContext(Dispatchers.IO) {
+        val profileMd = markdownManager.getCareerProfileContent()
+        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+        if (version.type == "WORK") {
+            profileDao.insertOrUpdateProfile(current.copy(workExperiences = version.content, lastUpdated = System.currentTimeMillis()))
+        } else if (version.type == "PROJECT") {
+            profileDao.insertOrUpdateProfile(current.copy(projectExperiences = version.content, lastUpdated = System.currentTimeMillis()))
+        }
+    }
+
+    suspend fun deleteExperienceVersion(id: Int) = withContext(Dispatchers.IO) {
+        versionDao.deleteVersionById(id)
+    }
+
+    suspend fun importWorkExperiences(content: String, sourceFileName: String) = withContext(Dispatchers.IO) {
+        val profileMd = markdownManager.getCareerProfileContent()
+        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+        profileDao.insertOrUpdateProfile(current.copy(workExperiences = content, lastUpdated = System.currentTimeMillis()))
+        versionDao.insertVersion(
+            ExperienceVersionEntity(
+                type = "WORK",
+                content = content,
+                timestamp = System.currentTimeMillis(),
+                summaryNote = "文件导入: $sourceFileName"
+            )
+        )
+    }
+
+    suspend fun importProjectExperiences(content: String, sourceFileName: String) = withContext(Dispatchers.IO) {
+        val profileMd = markdownManager.getCareerProfileContent()
+        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+        profileDao.insertOrUpdateProfile(current.copy(projectExperiences = content, lastUpdated = System.currentTimeMillis()))
+        versionDao.insertVersion(
+            ExperienceVersionEntity(
+                type = "PROJECT",
+                content = content,
+                timestamp = System.currentTimeMillis(),
+                summaryNote = "文件导入: $sourceFileName"
+            )
+        )
+    }
+
+    // --- Todo Actions ---
+
+    suspend fun setTodoCompleted(id: Int, isCompleted: Boolean) = withContext(Dispatchers.IO) {
+        todoDao.setCompleted(id, isCompleted)
+    }
+
+    suspend fun addTodo(todo: TodoItemEntity) = withContext(Dispatchers.IO) {
+        todoDao.insertTodo(todo)
+    }
+
+    suspend fun deleteTodo(id: Int) = withContext(Dispatchers.IO) {
+        todoDao.deleteById(id)
+    }
+
+    suspend fun updateCareerProfileManually(newContent: String) = withContext(Dispatchers.IO) {
+        markdownManager.writeCareerProfile(newContent)
+        profileDao.insertOrUpdateProfile(
+            UserCareerProfileEntity(
+                id = 1,
+                markdownContent = newContent,
+                lastUpdated = System.currentTimeMillis()
+            )
+        )
+    }
+
+    // --- Semantic Search ---
+
+    suspend fun performSemanticSearch(query: String): Result<List<com.example.data.ai.GeminiRepository.SemanticSearchResult>> = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext Result.success(emptyList())
+
+        val logs = logDao.getAllLogsOnce()
+        val settings = getSettings()
+
+        // 1. Try AI Semantic Search first
+        val aiResult = aiRepository.semanticSearchLogs(query, logs, settings)
+        if (aiResult.isSuccess && !aiResult.getOrNull().isNullOrEmpty()) {
+            return@withContext aiResult
+        }
+
+        // 2. Local fallback search
+        val lowerQuery = query.lowercase().trim()
+        val localMatches = logs.filter { log ->
+            log.summaryMarkdown.lowercase().contains(lowerQuery) ||
+            log.rawNotes.lowercase().contains(lowerQuery)
+        }.map { log ->
+            val text = if (log.summaryMarkdown.isNotBlank()) log.summaryMarkdown else log.rawNotes
+            val idx = text.lowercase().indexOf(lowerQuery)
+            val start = (idx - 25).coerceAtLeast(0)
+            val end = (idx + lowerQuery.length + 50).coerceAtMost(text.length)
+            val snippetText = if (idx != -1) text.substring(start, end) else text.take(80)
+
+            com.example.data.ai.GeminiRepository.SemanticSearchResult(
+                date = log.date,
+                relevanceScore = 80,
+                matchReason = "文本包含关键词 \"$query\"",
+                snippet = snippetText.replace("\n", " ").trim()
+            )
+        }
+
+        if (localMatches.isNotEmpty()) {
+            return@withContext Result.success(localMatches)
+        }
+
+        return@withContext Result.success(aiResult.getOrDefault(emptyList()))
+    }
+}

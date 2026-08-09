@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Document Base -->
+    <path
+        android:pathData="M32,24 L68,24 C72,24 76,28 76,32 L76,76 C76,80 72,84 68,84 L32,84 C28,84 24,80 24,76 L24,32 C24,28 28,24 32,24 Z"
+        android:fillColor="#FFFFFF" />
+    
+    <!-- Lines on Document -->
+    <path
+        android:pathData="M34,36 L60,36 M34,46 L68,46 M34,56 L62,56 M34,66 L52,66"
+        android:strokeWidth="3.5"
+        android:strokeColor="#FF818CF8"
+        android:strokeLineCap="round" />
+        
+    <!-- AI Sparkle Icon -->
+    <path
+        android:pathData="M70,28 L72,34 L78,36 L72,38 L70,44 L68,38 L62,36 L68,34 Z"
+        android:fillColor="#FFF59E0B" />
+    <path
+        android:pathData="M26,70 L27,73 L30,74 L27,75 L26,78 L25,75 L22,74 L25,73 Z"
+        android:fillColor="#FFF59E0B" />
+</vector>
