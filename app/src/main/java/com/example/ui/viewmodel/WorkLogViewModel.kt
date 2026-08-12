@@ -15,9 +15,19 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     val repository = WorkLogRepository(application)
 
+    init {
+        viewModelScope.launch {
+            repository.restoreLogsFromMarkdown()
+        }
+    }
+
     // UI Input States
     private val _rawInputText = MutableStateFlow("")
     val rawInputText: StateFlow<String> = _rawInputText.asStateFlow()
+
+    // Profile editing state
+    private val _editingProfileText = MutableStateFlow<String?>(null)
+    val editingProfileText: StateFlow<String?> = _editingProfileText.asStateFlow()
 
     private val _selectedDate = MutableStateFlow(repository.getTodayString())
     val selectedDate: StateFlow<String> = _selectedDate.asStateFlow()
@@ -256,9 +266,22 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun startEditingProfile(initialText: String) {
+        _editingProfileText.value = initialText
+    }
+
+    fun updateEditingProfileText(text: String) {
+        _editingProfileText.value = text
+    }
+
+    fun cancelEditingProfile() {
+        _editingProfileText.value = null
+    }
+
     fun saveCareerProfileManually(content: String) {
         viewModelScope.launch {
             repository.updateCareerProfileManually(content)
+            _editingProfileText.value = null
             showSnack("职业履历文档已更新")
         }
     }

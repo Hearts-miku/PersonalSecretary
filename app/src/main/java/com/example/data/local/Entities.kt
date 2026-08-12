@@ -40,7 +40,7 @@ data class UserSettingsEntity(
     @PrimaryKey val id: Int = 1,
     val apiKey: String = "",
     val baseUrl: String = "https://generativelanguage.googleapis.com/",
-    val selectedModel: String = "gemini-3.5-flash",
+    val selectedModel: String = "gemini-2.5-flash",
     val autoSummaryHour: Int = 20,
     val autoSummaryMinute: Int = 0,
     val isAutoSummaryEnabled: Boolean = true,

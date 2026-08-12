@@ -62,10 +62,32 @@ class MarkdownFileManager(private val context: Context) {
         }
     }
 
+    fun removeRawNotesForDate(dateStr: String) {
+        val file = rawNotesFile
+        if (!file.exists()) return
+        val content = file.readText()
+        val headerPattern = "### [$dateStr] 原始输入"
+        if (!content.contains(headerPattern)) return
+
+        val lines = content.lines()
+        val newLines = mutableListOf<String>()
+        var skipping = false
+        for (line in lines) {
+            if (line.trim().startsWith("### [") && line.trim().endsWith("] 原始输入")) {
+                skipping = line.contains("[$dateStr]")
+            }
+            if (!skipping) {
+                newLines.add(line)
+            }
+        }
+        file.writeText(newLines.joinToString("\n"))
+    }
+
     // --- Type 1: Daily Work Log Summaries (worklogs/YYYY-MM-DD.md) ---
 
     fun writeDailySummary(dateStr: String, markdownContent: String) {
-        val file = File(worklogsDir, "$dateStr.md")
+        val safeDate = if (dateStr.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) dateStr else "invalid_date_${System.currentTimeMillis()}"
+        val file = File(worklogsDir, "$safeDate.md")
         file.writeText(markdownContent)
     }
 

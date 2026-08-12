@@ -29,11 +29,14 @@ interface DailyWorkLogDao {
 
 @Dao
 interface TodoItemDao {
-    @Query("SELECT * FROM todo_items ORDER BY isCompleted ASC, priority DESC, id DESC")
+    @Query("SELECT * FROM todo_items ORDER BY isCompleted ASC, CASE priority WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END ASC, id DESC")
     fun getAllTodos(): Flow<List<TodoItemEntity>>
 
-    @Query("SELECT * FROM todo_items WHERE isCompleted = 0 ORDER BY priority DESC")
+    @Query("SELECT * FROM todo_items WHERE isCompleted = 0 ORDER BY CASE priority WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END ASC, id DESC")
     fun getPendingTodos(): Flow<List<TodoItemEntity>>
+
+    @Query("DELETE FROM todo_items WHERE sourceLogDate = :sourceDate AND isCompleted = 0")
+    suspend fun deletePendingTodosForDate(sourceDate: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTodo(todo: TodoItemEntity): Long

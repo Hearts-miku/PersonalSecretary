@@ -14,7 +14,7 @@ import androidx.room.RoomDatabase
         ExperienceVersionEntity::class
     ],
     version = 5,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dailyWorkLogDao(): DailyWorkLogDao

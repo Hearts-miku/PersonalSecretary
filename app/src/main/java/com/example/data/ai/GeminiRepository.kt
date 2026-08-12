@@ -33,8 +33,11 @@ class GeminiRepository {
         val userKey = settings?.apiKey?.trim()
         if (!userKey.isNullOrEmpty()) return userKey
         
-        val buildKey = BuildConfig.GEMINI_API_KEY.trim()
-        if (buildKey.isNotEmpty() && buildKey != "MY_GEMINI_API_KEY") return buildKey
+        val provider = settings?.apiProvider ?: "GEMINI"
+        if (provider == "GEMINI") {
+            val buildKey = BuildConfig.GEMINI_API_KEY.trim()
+            if (buildKey.isNotEmpty() && buildKey != "MY_GEMINI_API_KEY") return buildKey
+        }
         
         return ""
     }
@@ -56,12 +59,12 @@ class GeminiRepository {
     private fun getEffectiveModel(settings: UserSettingsEntity?): String {
         val model = settings?.selectedModel?.trim()
         val provider = settings?.apiProvider ?: "GEMINI"
-        if (!model.isNullOrEmpty()) return model
+        if (!model.isNullOrEmpty() && model != "gemini-3.5-flash") return model
         return when (provider) {
             "OPENAI" -> "gpt-4o"
             "ANTHROPIC" -> "claude-3-5-sonnet-20241022"
             "CUSTOM" -> "gpt-4o"
-            else -> "gemini-3.5-flash"
+            else -> "gemini-2.5-flash"
         }
     }
 
@@ -102,7 +105,7 @@ class GeminiRepository {
         prompt: String,
         systemInstruction: String?
     ): Result<String> {
-        val fullUrl = "${baseUrl}v1beta/models/$model:generateContent?key=$apiKey"
+        val fullUrl = "${baseUrl}v1beta/models/$model:generateContent"
         val requestJson = JSONObject()
 
         if (!systemInstruction.isNullOrBlank()) {
@@ -130,7 +133,11 @@ class GeminiRepository {
         requestJson.put("generationConfig", genConfig)
 
         val body = requestJson.toString().toRequestBody(jsonMediaType)
-        val httpRequest = Request.Builder().url(fullUrl).post(body).build()
+        val httpRequest = Request.Builder()
+            .url(fullUrl)
+            .addHeader("x-goog-api-key", apiKey)
+            .post(body)
+            .build()
 
         client.newCall(httpRequest).execute().use { response ->
             val responseStr = response.body?.string() ?: ""
@@ -143,11 +150,17 @@ class GeminiRepository {
             val candidates = resJson.optJSONArray("candidates")
             if (candidates != null && candidates.length() > 0) {
                 val firstCandidate = candidates.getJSONObject(0)
+                val finishReason = firstCandidate.optString("finishReason", "")
+                if (finishReason == "SAFETY" || finishReason == "RECITATION") {
+                    return Result.failure(Exception("Gemini 输出因安全策略被截断 ($finishReason)"))
+                }
                 val content = firstCandidate.optJSONObject("content")
                 val parts = content?.optJSONArray("parts")
                 if (parts != null && parts.length() > 0) {
                     val text = parts.getJSONObject(0).optString("text", "")
-                    return Result.success(text)
+                    if (text.isNotBlank()) {
+                        return Result.success(text)
+                    }
                 }
             }
             return Result.failure(Exception("Gemini 未返回有效回答"))
@@ -182,7 +195,9 @@ class GeminiRepository {
         val requestJson = JSONObject().apply {
             put("model", model)
             put("messages", messages)
-            put("temperature", 0.2)
+            if (!model.startsWith("o1") && !model.startsWith("o3")) {
+                put("temperature", 0.2)
+            }
         }
 
         val body = requestJson.toString().toRequestBody(jsonMediaType)
@@ -203,6 +218,10 @@ class GeminiRepository {
             val choices = resJson.optJSONArray("choices")
             if (choices != null && choices.length() > 0) {
                 val firstChoice = choices.getJSONObject(0)
+                val finishReason = firstChoice.optString("finish_reason", "")
+                if (finishReason == "length") {
+                    return Result.failure(Exception("OpenAI 输出因长度限制被截断"))
+                }
                 val message = firstChoice.optJSONObject("message")
                 val content = message?.optString("content", "") ?: ""
                 if (content.isNotBlank()) {
@@ -231,7 +250,7 @@ class GeminiRepository {
 
         val requestJson = JSONObject().apply {
             put("model", model)
-            put("max_tokens", 4096)
+            put("max_tokens", 8192)
             if (!systemInstruction.isNullOrBlank()) {
                 put("system", systemInstruction)
             }
@@ -255,6 +274,10 @@ class GeminiRepository {
             }
 
             val resJson = JSONObject(responseStr)
+            val stopReason = resJson.optString("stop_reason", "")
+            if (stopReason == "max_tokens") {
+                return Result.failure(Exception("Anthropic 输出达到 max_tokens 上限被截断"))
+            }
             val contentArr = resJson.optJSONArray("content")
             if (contentArr != null && contentArr.length() > 0) {
                 val firstObj = contentArr.getJSONObject(0)
@@ -592,7 +615,7 @@ class GeminiRepository {
                 val score = obj.optInt("relevanceScore", 50)
                 val reason = obj.optString("matchReason", "")
                 val snippet = obj.optString("snippet", "")
-                if (date.isNotBlank()) {
+                if (date.isNotBlank() && date.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) {
                     list.add(SemanticSearchResult(date, score, reason, snippet))
                 }
             }
@@ -646,10 +669,53 @@ class GeminiRepository {
         } else if (clean.startsWith("```")) {
             clean = clean.removePrefix("```").removeSuffix("```").trim()
         }
-        val firstBracket = clean.indexOfAny(charArrayOf('[', '{'))
-        val lastBracket = clean.lastIndexOfAny(charArrayOf(']', '}'))
-        if (firstBracket != -1 && lastBracket != -1 && lastBracket > firstBracket) {
-            clean = clean.substring(firstBracket, lastBracket + 1)
+
+        var firstJsonChar = -1
+        var firstType = ' '
+        for (i in clean.indices) {
+            val c = clean[i]
+            if (c == '{' || c == '[') {
+                firstJsonChar = i
+                firstType = c
+                break
+            }
+        }
+        if (firstJsonChar == -1) return clean
+
+        val targetEndChar = if (firstType == '{') '}' else ']'
+        var depth = 0
+        var inString = false
+        var escape = false
+        var lastMatchingChar = -1
+
+        for (i in firstJsonChar until clean.length) {
+            val c = clean[i]
+            if (escape) {
+                escape = false
+                continue
+            }
+            if (c == '\\') {
+                escape = true
+                continue
+            }
+            if (c == '"') {
+                inString = !inString
+                continue
+            }
+            if (!inString) {
+                if (c == firstType) depth++
+                else if (c == targetEndChar) {
+                    depth--
+                    if (depth == 0) {
+                        lastMatchingChar = i
+                        break
+                    }
+                }
+            }
+        }
+
+        if (firstJsonChar != -1 && lastMatchingChar != -1) {
+            return clean.substring(firstJsonChar, lastMatchingChar + 1)
         }
         return clean
     }
