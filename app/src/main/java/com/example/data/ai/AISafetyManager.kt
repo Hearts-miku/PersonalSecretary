@@ -6,24 +6,23 @@ package com.example.data.ai
  */
 object AISafetyManager {
 
-    val PRIVACY_PLACEHOLDERS = setOf(
-        "[姓名]", "[手机号码]", "[电子邮箱]", "[联系电话]", "[意向城市]", "[居住城市]", "[毕业院校]", "[学历]"
-    )
-
     /**
      * Sanitizes raw user input to prevent prompt injection or prompt escape attacks.
      */
-    fun sanitizeUserInput(input: String): String {
+    fun sanitizeUserInput(input: String, maxLength: Int = 30000): String {
         if (input.isBlank()) return ""
+        val truncated = if (input.length > maxLength) input.take(maxLength) + "\n...[内容超出最大字符限制，自动截断]" else input
         
-        var clean = input
+        var clean = truncated
+            // Remove deliberate system/assistant boundary injection strings
+            .replace(Regex("(?i)system:"), "[Filtered Tag]")
+            .replace(Regex("(?i)assistant:"), "[Filtered Tag]")
+            .replace(Regex("(?i)user:"), "[Filtered Tag]")
+            .replace(Regex("(?i)ignore previous instructions"), "[Safety Filtered]")
+            .replace(Regex("(?i)forget all rules"), "[Safety Filtered]")
+            .replace("```", "'''") // Prevent code block breakout injection
             .replace("<user_raw_content>", "&lt;user_raw_content&gt;")
             .replace("</user_raw_content>", "&lt;/user_raw_content&gt;")
-            .replace(Regex("(?i)ignore\\s+previous\\s+instructions"), "[Safety Filtered]")
-            .replace(Regex("(?i)forget\\s+all\\s+rules"), "[Safety Filtered]")
-            .replace("忽略之前的指令", "[Safety Filtered]")
-            .replace("忘记所有规则", "[Safety Filtered]")
-            .replace("忽略以上指令", "[Safety Filtered]")
 
         return clean.trim()
     }

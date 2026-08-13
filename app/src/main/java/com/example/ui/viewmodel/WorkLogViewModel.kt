@@ -15,24 +15,17 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     val repository = WorkLogRepository(application)
 
-    init {
-        viewModelScope.launch {
-            repository.restoreLogsFromMarkdown()
-        }
-    }
-
     // UI Input States
     private val _rawInputText = MutableStateFlow("")
     val rawInputText: StateFlow<String> = _rawInputText.asStateFlow()
-
-    // Profile editing state
-    private val _editingProfileText = MutableStateFlow<String?>(null)
-    val editingProfileText: StateFlow<String?> = _editingProfileText.asStateFlow()
 
     private val _selectedDate = MutableStateFlow(repository.getTodayString())
     val selectedDate: StateFlow<String> = _selectedDate.asStateFlow()
 
     // Resume State
+    private val _editingProfileText = MutableStateFlow<String?>(null)
+    val editingProfileText: StateFlow<String?> = _editingProfileText.asStateFlow()
+
     private val _resumeMarkdown = MutableStateFlow("")
     val resumeMarkdown: StateFlow<String> = _resumeMarkdown.asStateFlow()
 

@@ -170,8 +170,8 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                                 when (pKey) {
                                     "GEMINI" -> {
                                         baseUrlText = "https://generativelanguage.googleapis.com/"
-                                        if (selectedModel.isBlank() || selectedModel.contains("gpt") || selectedModel.contains("claude")) {
-                                            selectedModel = "gemini-3.5-flash"
+                                        if (selectedModel.isBlank() || selectedModel.contains("gpt") || selectedModel.contains("claude") || selectedModel == "gemini-3.5-flash") {
+                                            selectedModel = "gemini-2.5-flash"
                                         }
                                     }
                                     "OPENAI" -> {
@@ -226,7 +226,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     "OPENAI" -> listOf("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3-mini")
                     "ANTHROPIC" -> listOf("claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229")
                     "CUSTOM" -> listOf("deepseek-chat", "deepseek-r1", "qwen-max", "llama-3.3-70b")
-                    else -> listOf("gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-1.5-flash")
+                    else -> listOf("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")
                 }
 
                 Text("快捷选择或手动输入模型：", style = MaterialTheme.typography.labelMedium)

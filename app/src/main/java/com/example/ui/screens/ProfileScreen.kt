@@ -60,8 +60,8 @@ fun ProfileScreen(
     val projectVersions by viewModel.projectVersions.collectAsState()
 
     var activeTab by remember { mutableStateOf(0) } // 0 = 工作经历, 1 = 项目经历, 2 = 职业档案全貌
-    var isEditingProfile by remember { mutableStateOf(false) }
-    var editedProfileText by remember { mutableStateOf("") }
+    val editingProfileText by viewModel.editingProfileText.collectAsState()
+    val isEditingProfile = editingProfileText != null
 
     // Dialog state for Version History & Diff
     var showHistoryDialogType by remember { mutableStateOf<String?>(null) } // "WORK" or "PROJECT" or null
@@ -602,11 +602,9 @@ fun ProfileScreen(
 
                                 TextButton(onClick = {
                                     if (isEditingProfile) {
-                                        viewModel.saveCareerProfileManually(editedProfileText)
-                                        isEditingProfile = false
+                                        viewModel.saveCareerProfileManually(editingProfileText ?: "")
                                     } else {
-                                        editedProfileText = profileContent
-                                        isEditingProfile = true
+                                        viewModel.startEditingProfile(profileContent)
                                     }
                                 }) {
                                     Icon(
@@ -624,8 +622,8 @@ fun ProfileScreen(
 
                         if (isEditingProfile) {
                             OutlinedTextField(
-                                value = editedProfileText,
-                                onValueChange = { editedProfileText = it },
+                                value = editingProfileText ?: "",
+                                onValueChange = { viewModel.updateEditingProfileText(it) },
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .weight(1f),

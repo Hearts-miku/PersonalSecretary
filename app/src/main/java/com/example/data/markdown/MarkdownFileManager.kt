@@ -58,36 +58,34 @@ class MarkdownFileManager(private val context: Context) {
     fun clearRawNotesContent() {
         val file = rawNotesFile
         if (file.exists()) {
-            file.writeText("# 临时原始输入文档\n> AI总结后将自动清空此文件内容。\n\n")
+            file.writeText("# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n")
         }
     }
 
     fun removeRawNotesForDate(dateStr: String) {
         val file = rawNotesFile
         if (!file.exists()) return
-        val content = file.readText()
-        val headerPattern = "### [$dateStr] 原始输入"
-        if (!content.contains(headerPattern)) return
+        val text = file.readText()
+        val tag = "### [$dateStr] 原始输入"
+        if (!text.contains(tag)) return
 
-        val lines = content.lines()
-        val newLines = mutableListOf<String>()
-        var skipping = false
-        for (line in lines) {
-            if (line.trim().startsWith("### [") && line.trim().endsWith("] 原始输入")) {
-                skipping = line.contains("[$dateStr]")
-            }
-            if (!skipping) {
-                newLines.add(line)
-            }
+        val blocks = text.split("\n\n### [")
+        val header = blocks.firstOrNull() ?: "# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n"
+        val remaining = blocks.drop(1).filterNot { it.startsWith("$dateStr] 原始输入") }
+
+        val newContent = if (remaining.isEmpty()) {
+            "# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n"
+        } else {
+            if (header.endsWith("\n\n")) header + "### [" + remaining.joinToString("\n\n### [")
+            else header + "\n\n### [" + remaining.joinToString("\n\n### [")
         }
-        file.writeText(newLines.joinToString("\n"))
+        file.writeText(newContent)
     }
 
     // --- Type 1: Daily Work Log Summaries (worklogs/YYYY-MM-DD.md) ---
 
     fun writeDailySummary(dateStr: String, markdownContent: String) {
-        val safeDate = if (dateStr.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) dateStr else "invalid_date_${System.currentTimeMillis()}"
-        val file = File(worklogsDir, "$safeDate.md")
+        val file = File(worklogsDir, "$dateStr.md")
         file.writeText(markdownContent)
     }
 
