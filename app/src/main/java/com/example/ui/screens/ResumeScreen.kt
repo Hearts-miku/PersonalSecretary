@@ -139,7 +139,8 @@ fun ResumeScreen(
                 styles.forEach { (styleKey, styleName) ->
                     FilterChip(
                         selected = selectedStyle == styleKey,
-                        onClick = { viewModel.generateResume(styleKey) },
+                        onClick = { viewModel.setSelectedResumeStyle(styleKey) },
+                        enabled = !isGenerating,
                         label = { Text(styleName) },
                         modifier = Modifier.testTag("style_chip_$styleKey")
                     )

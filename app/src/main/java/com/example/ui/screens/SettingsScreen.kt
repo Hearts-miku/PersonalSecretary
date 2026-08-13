@@ -32,11 +32,11 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
     val aiStatusMessage by viewModel.aiStatusMessage.collectAsState()
 
-    var selectedProvider by remember(settings) { mutableStateOf(settings.apiProvider) }
-    var apiKeyText by remember(settings) { mutableStateOf(settings.apiKey) }
-    var baseUrlText by remember(settings) { mutableStateOf(settings.baseUrl) }
-    var selectedModel by remember(settings) { mutableStateOf(settings.selectedModel) }
-    var isAutoEnabled by remember(settings) { mutableStateOf(settings.isAutoSummaryEnabled) }
+    var selectedProvider by remember(settings.id) { mutableStateOf(settings.apiProvider) }
+    var apiKeyText by remember(settings.id) { mutableStateOf(settings.apiKey) }
+    var baseUrlText by remember(settings.id) { mutableStateOf(settings.baseUrl) }
+    var selectedModel by remember(settings.id) { mutableStateOf(settings.selectedModel) }
+    var isAutoEnabled by remember(settings.id) { mutableStateOf(settings.isAutoSummaryEnabled) }
     var hideKey by remember { mutableStateOf(true) }
 
     val mdInfo = remember { viewModel.repository.markdownManager.getMarkdownDirectoryInfo() }

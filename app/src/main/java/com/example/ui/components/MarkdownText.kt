@@ -14,6 +14,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -200,18 +201,48 @@ private fun parseInlineMarkdown(
 
         while (i < len) {
             when {
+                // Standard Markdown Link [title](url)
+                text.startsWith("[", i) && text.indexOf("]", i) > i && 
+                text.indexOf("]", i) + 1 < len && text[text.indexOf("]", i) + 1] == '(' -> {
+                    val endBracket = text.indexOf("]", i)
+                    val endParen = text.indexOf(")", endBracket + 2)
+                    if (endParen != -1) {
+                        val title = text.substring(i + 1, endBracket)
+                        withStyle(
+                            SpanStyle(
+                                color = Color(0xFF1E88E5),
+                                textDecoration = TextDecoration.Underline
+                            )
+                        ) {
+                            append(title)
+                        }
+                        i = endParen + 1
+                    } else {
+                        append(text[i])
+                        i++
+                    }
+                }
                 // Privacy Placeholder Highlight like [姓名], [电话], [电子邮箱]
                 text.startsWith("[", i) && text.indexOf("]", i) > i -> {
                     val endBracket = text.indexOf("]", i)
-                    val placeholder = text.substring(i, endBracket + 1)
-                    withStyle(
-                        SpanStyle(
-                            fontWeight = FontWeight.Bold,
-                            color = privacyFg,
-                            background = privacyBg
-                        )
-                    ) {
-                        append(" $placeholder ")
+                    val contentInside = text.substring(i + 1, endBracket)
+                    val isPrivacyPlaceholder = contentInside in setOf(
+                        "姓名", "电话", "手机号码", "电子邮箱", "邮箱", "居住城市", "城市",
+                        "毕业院校", "学校", "公司名称", "公司", "职务", "项目名称", "Filtered Tag", "Safety Filtered"
+                    ) || contentInside.contains("隐私") || contentInside.contains("占位")
+
+                    if (isPrivacyPlaceholder) {
+                        withStyle(
+                            SpanStyle(
+                                fontWeight = FontWeight.Bold,
+                                color = privacyFg,
+                                background = privacyBg
+                            )
+                        ) {
+                            append(" [$contentInside] ")
+                        }
+                    } else {
+                        append("[$contentInside]")
                     }
                     i = endBracket + 1
                 }

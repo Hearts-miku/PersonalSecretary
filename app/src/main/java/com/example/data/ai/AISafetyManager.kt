@@ -14,13 +14,6 @@ object AISafetyManager {
         val truncated = if (input.length > maxLength) input.take(maxLength) + "\n...[内容超出最大字符限制，自动截断]" else input
         
         var clean = truncated
-            // Remove deliberate system/assistant boundary injection strings
-            .replace(Regex("(?i)system:"), "[Filtered Tag]")
-            .replace(Regex("(?i)assistant:"), "[Filtered Tag]")
-            .replace(Regex("(?i)user:"), "[Filtered Tag]")
-            .replace(Regex("(?i)ignore previous instructions"), "[Safety Filtered]")
-            .replace(Regex("(?i)forget all rules"), "[Safety Filtered]")
-            .replace("```", "'''") // Prevent code block breakout injection
             .replace("<user_raw_content>", "&lt;user_raw_content&gt;")
             .replace("</user_raw_content>", "&lt;/user_raw_content&gt;")
 

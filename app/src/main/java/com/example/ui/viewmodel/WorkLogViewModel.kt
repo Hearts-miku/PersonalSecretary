@@ -147,6 +147,20 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    init {
+        viewModelScope.launch {
+            repository.restoreLogsFromMarkdownIfNeeded()
+            val savedResume = repository.getSavedResume()
+            if (savedResume.isNotBlank()) {
+                _resumeMarkdown.value = savedResume
+            }
+        }
+    }
+
+    fun setSelectedResumeStyle(style: String) {
+        _selectedResumeStyle.value = style
+    }
+
     fun generateResume(style: String = _selectedResumeStyle.value) {
         _selectedResumeStyle.value = style
         viewModelScope.launch {
@@ -157,7 +171,9 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
             _isGeneratingResume.value = false
 
             if (res.isSuccess) {
-                _resumeMarkdown.value = res.getOrDefault("")
+                val resumeStr = res.getOrDefault("")
+                _resumeMarkdown.value = resumeStr
+                repository.saveResume(resumeStr)
                 showSnack("简历生成成功！已包含隐私占位符保护。")
             } else {
                 showSnack("简历生成失败: ${res.exceptionOrNull()?.message}")

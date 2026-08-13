@@ -104,7 +104,9 @@ fun ProfileScreen(
     }
 
     val summarizedDays = remember(allLogs) { allLogs.count { it.isSummarized } }
-    val scrollState = rememberScrollState()
+    val tab0ScrollState = rememberScrollState()
+    val tab1ScrollState = rememberScrollState()
+    val tab2ScrollState = rememberScrollState()
 
     Column(
         modifier = Modifier
@@ -443,7 +445,7 @@ fun ProfileScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .verticalScroll(scrollState)
+                                    .verticalScroll(tab0ScrollState)
                             ) {
                                 MarkdownText(markdown = workExpContent)
                             }
@@ -569,7 +571,7 @@ fun ProfileScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .verticalScroll(scrollState)
+                                    .verticalScroll(tab1ScrollState)
                             ) {
                                 MarkdownText(markdown = projectExpContent)
                             }
@@ -633,7 +635,7 @@ fun ProfileScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .verticalScroll(scrollState)
+                                    .verticalScroll(tab2ScrollState)
                             ) {
                                 MarkdownText(
                                     markdown = profileContent.ifBlank { "职业履历仍在收集阶段，随着您在【主页】记录每日工作并触发AI整理，此处的职业总结将自动增量扩展。" }

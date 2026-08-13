@@ -33,7 +33,7 @@ fun CustomCalendarView(
     // Initialize calendar to selectedDate
     LaunchedEffect(selectedDate) {
         try {
-            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
             val d = sdf.parse(selectedDate)
             if (d != null) {
                 calendar.time = d
@@ -46,7 +46,7 @@ fun CustomCalendarView(
     var currentMonthCalendar by remember { mutableStateOf(calendar.clone() as Calendar) }
 
     val monthFormat = remember { SimpleDateFormat("yyyy年 MM月", Locale.CHINA) }
-    val dayFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
+    val dayFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.ROOT) }
 
     Card(
         modifier = modifier.fillMaxWidth(),

@@ -44,26 +44,50 @@ class WorkLogRepository(private val context: Context) {
         settingsDao.saveSettings(settings)
     }
 
-    suspend fun restoreLogsFromMarkdown() = withContext(Dispatchers.IO) {
-        val files = markdownManager.listAllDailySummaryFiles()
-        for (file in files) {
-            val dateStr = file.nameWithoutExtension
-            if (dateStr.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) {
-                val existing = logDao.getLogByDate(dateStr)
-                if (existing == null || existing.summaryMarkdown.isBlank()) {
+    suspend fun restoreLogsFromMarkdownIfNeeded() = withContext(Dispatchers.IO) {
+        val existingLogs = logDao.getAllLogsOnce()
+        if (existingLogs.isEmpty()) {
+            val files = markdownManager.listAllDailySummaryFiles()
+            for (file in files) {
+                val dateStr = file.nameWithoutExtension
+                if (dateStr.matches(Regex("""^\d{4}-\d{2}-\d{2}$"""))) {
                     val content = file.readText()
-                    logDao.insertOrUpdate(
-                        DailyWorkLogEntity(
-                            date = dateStr,
-                            rawNotes = existing?.rawNotes ?: "",
-                            summaryMarkdown = content,
-                            isSummarized = true,
-                            updatedAt = file.lastModified()
+                    if (content.isNotBlank()) {
+                        logDao.insertOrUpdate(
+                            DailyWorkLogEntity(
+                                date = dateStr,
+                                rawNotes = "",
+                                summaryMarkdown = content,
+                                isSummarized = true,
+                                updatedAt = file.lastModified()
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
+
+        val existingProfile = profileDao.getProfile()
+        if (existingProfile == null || existingProfile.markdownContent.isBlank()) {
+            val profileContent = markdownManager.getCareerProfileContent()
+            if (profileContent.isNotBlank()) {
+                profileDao.insertOrUpdateProfile(
+                    UserCareerProfileEntity(
+                        id = 1,
+                        markdownContent = profileContent,
+                        lastUpdated = System.currentTimeMillis()
+                    )
+                )
+            }
+        }
+    }
+
+    fun getSavedResume(): String {
+        return markdownManager.getGeneratedResumeContent()
+    }
+
+    fun saveResume(content: String) {
+        markdownManager.writeGeneratedResume(content)
     }
 
     // --- Page 1: Raw Input Handling ---

@@ -42,6 +42,17 @@ class MarkdownFileManager(private val context: Context) {
     private val careerProfileFile: File
         get() = File(userDir, "career_profile.md")
 
+    private val resumeFile: File
+        get() = File(userDir, "generated_resume.md")
+
+    fun writeGeneratedResume(markdownContent: String) {
+        resumeFile.writeText(markdownContent)
+    }
+
+    fun getGeneratedResumeContent(): String {
+        return if (resumeFile.exists()) resumeFile.readText() else ""
+    }
+
     // --- Type 2: Raw Notes Document (temp/raw_notes.md) ---
 
     fun appendRawNote(text: String, dateStr: String) {
@@ -85,11 +96,13 @@ class MarkdownFileManager(private val context: Context) {
     // --- Type 1: Daily Work Log Summaries (worklogs/YYYY-MM-DD.md) ---
 
     fun writeDailySummary(dateStr: String, markdownContent: String) {
+        if (!dateStr.matches(Regex("""^\d{4}-\d{2}-\d{2}$"""))) return
         val file = File(worklogsDir, "$dateStr.md")
         file.writeText(markdownContent)
     }
 
     fun getDailySummary(dateStr: String): String? {
+        if (!dateStr.matches(Regex("""^\d{4}-\d{2}-\d{2}$"""))) return null
         val file = File(worklogsDir, "$dateStr.md")
         return if (file.exists()) file.readText() else null
     }
