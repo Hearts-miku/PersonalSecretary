@@ -782,6 +782,30 @@ fun VersionHistoryDialog(
     onDismiss: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
+    var versionToDelete by remember { mutableStateOf<Int?>(null) }
+
+    if (versionToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { versionToDelete = null },
+            title = { Text("确认删除", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)) },
+            text = { Text("是否确定删除该历史版本？删除后将无法恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        versionToDelete?.let { onDelete(it) }
+                        versionToDelete = null
+                    }
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { versionToDelete = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -897,7 +921,7 @@ fun VersionHistoryDialog(
                                     }
 
                                     IconButton(
-                                        onClick = { onDelete(ver.id) },
+                                        onClick = { versionToDelete = ver.id },
                                         modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(

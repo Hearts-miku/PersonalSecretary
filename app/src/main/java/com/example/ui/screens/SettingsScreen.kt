@@ -28,15 +28,23 @@ import com.example.ui.viewmodel.WorkLogViewModel
 
 @Composable
 fun SettingsScreen(viewModel: WorkLogViewModel) {
-    val settings by viewModel.settings.collectAsState()
+    val settingsState by viewModel.settings.collectAsState()
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
     val aiStatusMessage by viewModel.aiStatusMessage.collectAsState()
 
-    var selectedProvider by remember(settings.id) { mutableStateOf(settings.apiProvider) }
-    var apiKeyText by remember(settings.id) { mutableStateOf(settings.apiKey) }
-    var baseUrlText by remember(settings.id) { mutableStateOf(settings.baseUrl) }
-    var selectedModel by remember(settings.id) { mutableStateOf(settings.selectedModel) }
-    var isAutoEnabled by remember(settings.id) { mutableStateOf(settings.isAutoSummaryEnabled) }
+    if (settingsState == null) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    val settings = settingsState!!
+
+    var selectedProvider by remember(settings) { mutableStateOf(settings.apiProvider) }
+    var apiKeyText by remember(settings) { mutableStateOf(settings.apiKey) }
+    var baseUrlText by remember(settings) { mutableStateOf(settings.baseUrl) }
+    var selectedModel by remember(settings) { mutableStateOf(settings.selectedModel) }
     var hideKey by remember { mutableStateOf(true) }
 
     val mdInfo = remember { viewModel.repository.markdownManager.getMarkdownDirectoryInfo() }
@@ -267,8 +275,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                                 apiKey = apiKeyText,
                                 baseUrl = baseUrlText,
                                 selectedModel = selectedModel,
-                                apiProvider = selectedProvider,
-                                isAutoSummaryEnabled = isAutoEnabled
+                                apiProvider = selectedProvider
                             )
                         )
                     },
@@ -310,16 +317,13 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     }
 
                     Switch(
-                        checked = isAutoEnabled,
-                        onCheckedChange = {
-                            isAutoEnabled = it
-                            viewModel.updateSettings(settings.copy(isAutoSummaryEnabled = it))
-                        }
+                        checked = false,
+                        onCheckedChange = { },
+                        enabled = false
                     )
                 }
-
                 Text(
-                    text = "配置每天固定时间（默认 20:00）自动对未整理的原始工作内容进行 AI 归纳，并自动评估是否更新【用户职业履历与技能】。",
+                    text = "即将支持：系统级定时任务（如利用 WorkManager 在每天 20:00 自动整理日志）将在后续版本接入，敬请期待。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

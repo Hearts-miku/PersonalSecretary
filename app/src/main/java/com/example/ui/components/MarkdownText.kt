@@ -226,10 +226,7 @@ private fun parseInlineMarkdown(
                 text.startsWith("[", i) && text.indexOf("]", i) > i -> {
                     val endBracket = text.indexOf("]", i)
                     val contentInside = text.substring(i + 1, endBracket)
-                    val isPrivacyPlaceholder = contentInside in setOf(
-                        "姓名", "电话", "手机号码", "电子邮箱", "邮箱", "居住城市", "城市",
-                        "毕业院校", "学校", "公司名称", "公司", "职务", "项目名称", "Filtered Tag", "Safety Filtered"
-                    ) || contentInside.contains("隐私") || contentInside.contains("占位")
+                    val isPrivacyPlaceholder = contentInside in com.example.data.ai.AISafetyManager.PRIVACY_PLACEHOLDERS || contentInside.contains("隐私") || contentInside.contains("占位")
 
                     if (isPrivacyPlaceholder) {
                         withStyle(

@@ -21,8 +21,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             val viewModel: WorkLogViewModel = viewModel()
             val settings by viewModel.settings.collectAsState()
-
-            WorkLogTheme(themeMode = settings.themeMode) {
+            
+            val themeMode = settings?.themeMode ?: "SYSTEM"
+            WorkLogTheme(themeMode = themeMode) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     MainScreen(viewModel = viewModel)
                 }

@@ -77,9 +77,8 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     val projectVersions: StateFlow<List<com.example.data.local.ExperienceVersionEntity>> = repository.projectVersionsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val settings: StateFlow<UserSettingsEntity> = repository.settingsFlow
-        .map { it ?: UserSettingsEntity() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserSettingsEntity())
+    val settings: StateFlow<UserSettingsEntity?> = repository.settingsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // Selected Date Log Flow
     val selectedDateLog: StateFlow<DailyWorkLogEntity?> = combine(allLogs, selectedDate) { logs, date ->
@@ -333,5 +332,20 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearSnack() {
         _snackMessage.value = null
+    }
+
+    fun exportAllDataToZip(outputStream: java.io.OutputStream) {
+        viewModelScope.launch {
+            try {
+                repository.exportDataToZip(outputStream)
+                showSnack("数据导出成功")
+            } catch (e: Exception) {
+                showSnack("导出失败: ${e.message}")
+            } finally {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    outputStream.close()
+                }
+            }
+        }
     }
 }

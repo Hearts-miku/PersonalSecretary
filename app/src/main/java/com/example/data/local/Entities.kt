@@ -18,7 +18,6 @@ data class TodoItemEntity(
     val title: String,
     val description: String = "",
     val dateCreated: String, // YYYY-MM-DD
-    val dateDue: String = "",
     val isCompleted: Boolean = false,
     val priority: String = "MEDIUM", // HIGH, MEDIUM, LOW
     val category: String = "Work",
@@ -29,7 +28,6 @@ data class TodoItemEntity(
 data class UserCareerProfileEntity(
     @PrimaryKey val id: Int = 1,
     val markdownContent: String,
-    val skillsSummary: String = "",
     val workExperiences: String = "",
     val projectExperiences: String = "",
     val lastUpdated: Long = System.currentTimeMillis()
@@ -41,13 +39,6 @@ data class UserSettingsEntity(
     val apiKey: String = "",
     val baseUrl: String = "https://generativelanguage.googleapis.com/",
     val selectedModel: String = "gemini-2.5-flash",
-    val autoSummaryHour: Int = 20,
-    val autoSummaryMinute: Int = 0,
-    val isAutoSummaryEnabled: Boolean = true,
-    val resumeTemplate: String = "Modern", // Modern, Classic, Minimal
-    val enableAntiInjection: Boolean = true,
-    val enableAntiHallucination: Boolean = true,
-    val lastScheduledRun: Long = 0L,
     val themeMode: String = "SYSTEM", // "SYSTEM", "LIGHT", "DARK"
     val apiProvider: String = "GEMINI" // "GEMINI", "OPENAI", "ANTHROPIC", "CUSTOM"
 )

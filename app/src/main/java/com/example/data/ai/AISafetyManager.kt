@@ -20,6 +20,11 @@ object AISafetyManager {
         return clean.trim()
     }
 
+    val PRIVACY_PLACEHOLDERS = setOf(
+        "姓名", "电话", "联系电话", "手机号码", "电子邮箱", "邮箱", "居住城市", "城市", "意向城市",
+        "毕业院校", "学校", "公司名称", "公司", "职务", "项目名称", "Filtered Tag", "Safety Filtered"
+    )
+
     /**
      * Common system instructions for Anti-Injection and Anti-Hallucination.
      */
@@ -32,6 +37,6 @@ object AISafetyManager {
            - 严禁虚构用户未具备的职业技能或待办事项；
            - 若原始记录信息较少，客观简练概括即可，不进行夸大补充。
         3. 个人隐私保护（针对简历生成）：
-           - 简历中的个人敏感信息必须全部使用标准占位符表示，例如：`[姓名]`、`[手机号码]`、`[电子邮箱]`、`[居住城市]`、`[毕业院校]`。
+           - 简历中的个人敏感信息必须全部使用标准占位符表示，例如：`[姓名]`、`[联系电话]`、`[电子邮箱]`、`[居住城市]`、`[毕业院校]`。
     """.trimIndent()
 }

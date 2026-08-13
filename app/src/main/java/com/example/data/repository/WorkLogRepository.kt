@@ -7,6 +7,7 @@ import com.example.data.markdown.MarkdownFileManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -28,7 +29,9 @@ class WorkLogRepository(private val context: Context) {
     val allLogsFlow: Flow<List<DailyWorkLogEntity>> = logDao.getAllLogs()
     val allTodosFlow: Flow<List<TodoItemEntity>> = todoDao.getAllTodos()
     val profileFlow: Flow<UserCareerProfileEntity?> = profileDao.getProfileFlow()
-    val settingsFlow: Flow<UserSettingsEntity?> = settingsDao.getSettingsFlow()
+    val settingsFlow: Flow<UserSettingsEntity?> = settingsDao.getSettingsFlow().map {
+        it?.copy(apiKey = com.example.data.local.CryptoManager.decrypt(it.apiKey))
+    }
     val workVersionsFlow: Flow<List<ExperienceVersionEntity>> = versionDao.getVersionsByTypeFlow("WORK")
     val projectVersionsFlow: Flow<List<ExperienceVersionEntity>> = versionDao.getVersionsByTypeFlow("PROJECT")
 
@@ -37,11 +40,12 @@ class WorkLogRepository(private val context: Context) {
     }
 
     suspend fun getSettings(): UserSettingsEntity = withContext(Dispatchers.IO) {
-        settingsDao.getSettings() ?: UserSettingsEntity().also { settingsDao.saveSettings(it) }
+        val s = settingsDao.getSettings() ?: UserSettingsEntity().also { settingsDao.saveSettings(it) }
+        s.copy(apiKey = com.example.data.local.CryptoManager.decrypt(s.apiKey))
     }
 
     suspend fun saveSettings(settings: UserSettingsEntity) = withContext(Dispatchers.IO) {
-        settingsDao.saveSettings(settings)
+        settingsDao.saveSettings(settings.copy(apiKey = com.example.data.local.CryptoManager.encrypt(settings.apiKey)))
     }
 
     suspend fun restoreLogsFromMarkdownIfNeeded() = withContext(Dispatchers.IO) {
@@ -70,11 +74,21 @@ class WorkLogRepository(private val context: Context) {
         val existingProfile = profileDao.getProfile()
         if (existingProfile == null || existingProfile.markdownContent.isBlank()) {
             val profileContent = markdownManager.getCareerProfileContent()
-            if (profileContent.isNotBlank()) {
+            val workContent = markdownManager.getWorkExperiencesContent()
+            val projectContent = markdownManager.getProjectExperiencesContent()
+
+            if (profileContent.isNotBlank() || workContent.isNotBlank() || projectContent.isNotBlank()) {
                 profileDao.insertOrUpdateProfile(
-                    UserCareerProfileEntity(
+                    existingProfile?.copy(
+                        markdownContent = profileContent.ifBlank { existingProfile.markdownContent },
+                        workExperiences = workContent.ifBlank { existingProfile.workExperiences },
+                        projectExperiences = projectContent.ifBlank { existingProfile.projectExperiences },
+                        lastUpdated = System.currentTimeMillis()
+                    ) ?: UserCareerProfileEntity(
                         id = 1,
                         markdownContent = profileContent,
+                        workExperiences = workContent,
+                        projectExperiences = projectContent,
                         lastUpdated = System.currentTimeMillis()
                     )
                 )
@@ -82,11 +96,11 @@ class WorkLogRepository(private val context: Context) {
         }
     }
 
-    fun getSavedResume(): String {
-        return markdownManager.getGeneratedResumeContent()
+    suspend fun getSavedResume(): String = withContext(Dispatchers.IO) {
+        markdownManager.getGeneratedResumeContent()
     }
 
-    fun saveResume(content: String) {
+    suspend fun saveResume(content: String) = withContext(Dispatchers.IO) {
         markdownManager.writeGeneratedResume(content)
     }
 
@@ -201,6 +215,7 @@ class WorkLogRepository(private val context: Context) {
                         )
                     )
 
+                    markdownManager.writeCareerProfile(evalObj.updatedProfileMarkdown)
                     profileDao.insertOrUpdateProfile(
                         currentProfile.copy(
                             markdownContent = evalObj.updatedProfileMarkdown,
@@ -253,6 +268,7 @@ class WorkLogRepository(private val context: Context) {
         val res = aiRepository.generateWorkExperiences(combinedContext, settings)
         if (res.isSuccess) {
             val content = res.getOrDefault("")
+            markdownManager.writeWorkExperiences(content)
             profileDao.insertOrUpdateProfile(current.copy(workExperiences = content, lastUpdated = System.currentTimeMillis()))
             // Save new version
             versionDao.insertVersion(
@@ -290,6 +306,7 @@ class WorkLogRepository(private val context: Context) {
         val res = aiRepository.generateProjectExperiences(combinedContext, settings)
         if (res.isSuccess) {
             val content = res.getOrDefault("")
+            markdownManager.writeProjectExperiences(content)
             profileDao.insertOrUpdateProfile(current.copy(projectExperiences = content, lastUpdated = System.currentTimeMillis()))
             // Save new version
             versionDao.insertVersion(
@@ -308,8 +325,10 @@ class WorkLogRepository(private val context: Context) {
         val profileMd = markdownManager.getCareerProfileContent()
         val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
         if (version.type == "WORK") {
+            markdownManager.writeWorkExperiences(version.content)
             profileDao.insertOrUpdateProfile(current.copy(workExperiences = version.content, lastUpdated = System.currentTimeMillis()))
         } else if (version.type == "PROJECT") {
+            markdownManager.writeProjectExperiences(version.content)
             profileDao.insertOrUpdateProfile(current.copy(projectExperiences = version.content, lastUpdated = System.currentTimeMillis()))
         } else if (version.type == "PROFILE") {
             markdownManager.writeCareerProfile(version.content)
@@ -324,6 +343,7 @@ class WorkLogRepository(private val context: Context) {
     suspend fun importWorkExperiences(content: String, sourceFileName: String) = withContext(Dispatchers.IO) {
         val profileMd = markdownManager.getCareerProfileContent()
         val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+        markdownManager.writeWorkExperiences(content)
         profileDao.insertOrUpdateProfile(current.copy(workExperiences = content, lastUpdated = System.currentTimeMillis()))
         versionDao.insertVersion(
             ExperienceVersionEntity(
@@ -338,6 +358,7 @@ class WorkLogRepository(private val context: Context) {
     suspend fun importProjectExperiences(content: String, sourceFileName: String) = withContext(Dispatchers.IO) {
         val profileMd = markdownManager.getCareerProfileContent()
         val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+        markdownManager.writeProjectExperiences(content)
         profileDao.insertOrUpdateProfile(current.copy(projectExperiences = content, lastUpdated = System.currentTimeMillis()))
         versionDao.insertVersion(
             ExperienceVersionEntity(
@@ -422,5 +443,9 @@ class WorkLogRepository(private val context: Context) {
         }
 
         return@withContext Result.success(aiResult.getOrDefault(emptyList()))
+    }
+
+    suspend fun exportDataToZip(outputStream: java.io.OutputStream) = withContext(Dispatchers.IO) {
+        markdownManager.exportAllDataToZip(outputStream)
     }
 }

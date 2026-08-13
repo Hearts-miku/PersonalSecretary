@@ -45,12 +45,34 @@ class MarkdownFileManager(private val context: Context) {
     private val resumeFile: File
         get() = File(userDir, "generated_resume.md")
 
+    private val workExperiencesFile: File
+        get() = File(userDir, "work_experiences.md")
+        
+    private val projectExperiencesFile: File
+        get() = File(userDir, "project_experiences.md")
+
     fun writeGeneratedResume(markdownContent: String) {
         resumeFile.writeText(markdownContent)
     }
 
     fun getGeneratedResumeContent(): String {
         return if (resumeFile.exists()) resumeFile.readText() else ""
+    }
+    
+    fun writeWorkExperiences(markdownContent: String) {
+        workExperiencesFile.writeText(markdownContent)
+    }
+    
+    fun getWorkExperiencesContent(): String {
+        return if (workExperiencesFile.exists()) workExperiencesFile.readText() else ""
+    }
+    
+    fun writeProjectExperiences(markdownContent: String) {
+        projectExperiencesFile.writeText(markdownContent)
+    }
+    
+    fun getProjectExperiencesContent(): String {
+        return if (projectExperiencesFile.exists()) projectExperiencesFile.readText() else ""
     }
 
     // --- Type 2: Raw Notes Document (temp/raw_notes.md) ---
@@ -64,13 +86,6 @@ class MarkdownFileManager(private val context: Context) {
     fun getRawNotesContent(): String {
         val file = rawNotesFile
         return if (file.exists()) file.readText() else ""
-    }
-
-    fun clearRawNotesContent() {
-        val file = rawNotesFile
-        if (file.exists()) {
-            file.writeText("# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n")
-        }
     }
 
     fun removeRawNotesForDate(dateStr: String) {
@@ -152,5 +167,19 @@ class MarkdownFileManager(private val context: Context) {
         val logFiles = listAllDailySummaryFiles()
         result["worklogs_count"] = "${logFiles.size} 天总结文档"
         return result
+    }
+
+    /**
+     * Export all data to a zip file
+     */
+    fun exportAllDataToZip(outputStream: java.io.OutputStream) {
+        java.util.zip.ZipOutputStream(outputStream).use { zos ->
+            baseDir.walkTopDown().filter { it.isFile }.forEach { file ->
+                val zipEntry = java.util.zip.ZipEntry(file.relativeTo(baseDir).path)
+                zos.putNextEntry(zipEntry)
+                file.inputStream().use { it.copyTo(zos) }
+                zos.closeEntry()
+            }
+        }
     }
 }

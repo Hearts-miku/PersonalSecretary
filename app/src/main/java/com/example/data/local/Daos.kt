@@ -14,26 +14,14 @@ interface DailyWorkLogDao {
     @Query("SELECT * FROM daily_work_logs WHERE date = :date LIMIT 1")
     suspend fun getLogByDate(date: String): DailyWorkLogEntity?
 
-    @Query("SELECT * FROM daily_work_logs WHERE date = :date LIMIT 1")
-    fun getLogFlowByDate(date: String): Flow<DailyWorkLogEntity?>
-
-    @Query("SELECT * FROM daily_work_logs WHERE isSummarized = 0 AND rawNotes != ''")
-    suspend fun getUnsummarizedLogs(): List<DailyWorkLogEntity>
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(log: DailyWorkLogEntity)
-
-    @Query("DELETE FROM daily_work_logs WHERE date = :date")
-    suspend fun deleteByDate(date: String)
 }
 
 @Dao
 interface TodoItemDao {
     @Query("SELECT * FROM todo_items ORDER BY isCompleted ASC, CASE priority WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END ASC, id DESC")
     fun getAllTodos(): Flow<List<TodoItemEntity>>
-
-    @Query("SELECT * FROM todo_items WHERE isCompleted = 0 ORDER BY CASE priority WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END ASC, id DESC")
-    fun getPendingTodos(): Flow<List<TodoItemEntity>>
 
     @Query("DELETE FROM todo_items WHERE sourceLogDate = :sourceDate AND isCompleted = 0")
     suspend fun deletePendingTodosForDate(sourceDate: String)
@@ -44,17 +32,11 @@ interface TodoItemDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTodos(todos: List<TodoItemEntity>)
 
-    @Update
-    suspend fun updateTodo(todo: TodoItemEntity)
-
     @Query("UPDATE todo_items SET isCompleted = :isCompleted WHERE id = :id")
     suspend fun setCompleted(id: Int, isCompleted: Boolean)
 
     @Query("DELETE FROM todo_items WHERE id = :id")
     suspend fun deleteById(id: Int)
-
-    @Query("DELETE FROM todo_items WHERE isCompleted = 1")
-    suspend fun clearCompleted()
 }
 
 @Dao
