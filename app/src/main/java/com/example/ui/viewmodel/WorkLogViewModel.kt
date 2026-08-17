@@ -15,6 +15,12 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     val repository = WorkLogRepository(application)
 
+    init {
+        viewModelScope.launch {
+            repository.getSettings()
+        }
+    }
+
     // UI Input States
     private val _rawInputText = MutableStateFlow("")
     val rawInputText: StateFlow<String> = _rawInputText.asStateFlow()
@@ -148,6 +154,7 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         viewModelScope.launch {
+            repository.getSettings()
             repository.restoreLogsFromMarkdownIfNeeded()
             val savedResume = repository.getSavedResume()
             if (savedResume.isNotBlank()) {
