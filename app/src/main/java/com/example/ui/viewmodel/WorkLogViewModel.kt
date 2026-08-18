@@ -15,12 +15,6 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     val repository = WorkLogRepository(application)
 
-    init {
-        viewModelScope.launch {
-            repository.getSettings()
-        }
-    }
-
     // UI Input States
     private val _rawInputText = MutableStateFlow("")
     val rawInputText: StateFlow<String> = _rawInputText.asStateFlow()
@@ -67,11 +61,23 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     private val _isProcessingAI = MutableStateFlow(false)
     val isProcessingAI: StateFlow<Boolean> = _isProcessingAI.asStateFlow()
 
+    private val _isImportingFile = MutableStateFlow(false)
+    val isImportingFile: StateFlow<Boolean> = _isImportingFile.asStateFlow()
+
     private val _aiStatusMessage = MutableStateFlow("")
     val aiStatusMessage: StateFlow<String> = _aiStatusMessage.asStateFlow()
 
     private val _snackMessage = MutableStateFlow<String?>(null)
     val snackMessage: StateFlow<String?> = _snackMessage.asStateFlow()
+
+    private val _mdInfo = MutableStateFlow<Map<String, String>>(emptyMap())
+    val mdInfo: StateFlow<Map<String, String>> = _mdInfo.asStateFlow()
+
+    fun loadMdInfo() {
+        viewModelScope.launch {
+            _mdInfo.value = repository.getMarkdownDirectoryInfo()
+        }
+    }
 
     // Database Reactive Flows
     val allLogs: StateFlow<List<DailyWorkLogEntity>> = repository.allLogsFlow
@@ -275,10 +281,14 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     fun importWorkExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
         viewModelScope.launch {
-            _isProcessingAI.value = refineWithAi
+            _isImportingFile.value = true
             try {
                 val finalContent = if (refineWithAi) {
                     val res = repository.aiRepository.refineImportedContent(content, "工作经历", repository.getSettings())
+                    if (res.isFailure) {
+                        showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
+                        return@launch
+                    }
                     res.getOrNull() ?: content
                 } else {
                     content
@@ -286,17 +296,21 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 repository.importWorkExperiences(finalContent, sourceFileName)
                 showSnack(if (refineWithAi) "工作经历已由 AI 提炼并导入！" else "工作经历文件已直接导入！")
             } finally {
-                _isProcessingAI.value = false
+                _isImportingFile.value = false
             }
         }
     }
 
     fun importProjectExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
         viewModelScope.launch {
-            _isProcessingAI.value = refineWithAi
+            _isImportingFile.value = true
             try {
                 val finalContent = if (refineWithAi) {
                     val res = repository.aiRepository.refineImportedContent(content, "项目经历", repository.getSettings())
+                    if (res.isFailure) {
+                        showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
+                        return@launch
+                    }
                     res.getOrNull() ?: content
                 } else {
                     content
@@ -304,17 +318,21 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 repository.importProjectExperiences(finalContent, sourceFileName)
                 showSnack(if (refineWithAi) "项目经历已由 AI 提炼并导入！" else "项目经历文件已直接导入！")
             } finally {
-                _isProcessingAI.value = false
+                _isImportingFile.value = false
             }
         }
     }
 
     fun importCareerProfile(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
         viewModelScope.launch {
-            _isProcessingAI.value = refineWithAi
+            _isImportingFile.value = true
             try {
                 val finalContent = if (refineWithAi) {
                     val res = repository.aiRepository.refineImportedContent(content, "职业档案全貌", repository.getSettings())
+                    if (res.isFailure) {
+                        showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
+                        return@launch
+                    }
                     res.getOrNull() ?: content
                 } else {
                     content
@@ -322,7 +340,7 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 repository.updateCareerProfileManually(finalContent)
                 showSnack(if (refineWithAi) "职业档案全貌已由 AI 提炼并导入！" else "职业档案全貌文件已直接导入！")
             } finally {
-                _isProcessingAI.value = false
+                _isImportingFile.value = false
             }
         }
     }
@@ -403,7 +421,9 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             _isSearchingLogs.value = true
-            val res = repository.performSemanticSearch(q)
+            val res = repository.performSemanticSearch(q) { fallbackMsg ->
+                showSnack(fallbackMsg)
+            }
             _isSearchingLogs.value = false
             if (res.isSuccess) {
                 _searchResults.value = res.getOrDefault(emptyList())
@@ -449,6 +469,8 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 _rawInputText.value = ""
                 _resumeMarkdown.value = ""
                 _editingProfileText.value = null
+                _editingWorkExpText.value = null
+                _editingProjectExpText.value = null
                 showSnack("所有记录的数据已清空")
             } catch (e: Exception) {
                 showSnack("清空失败: ${e.message}")

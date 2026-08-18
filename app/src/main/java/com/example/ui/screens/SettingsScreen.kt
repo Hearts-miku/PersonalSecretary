@@ -43,10 +43,10 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
 
     val settings = settingsState!!
 
-    var selectedProvider by remember(settings) { mutableStateOf(settings.apiProvider) }
-    var apiKeyText by remember(settings) { mutableStateOf(settings.apiKey) }
-    var baseUrlText by remember(settings) { mutableStateOf(settings.baseUrl) }
-    var selectedModel by remember(settings) { mutableStateOf(settings.selectedModel) }
+    var selectedProvider by rememberSaveable { mutableStateOf(settings.apiProvider) }
+    var apiKeyText by rememberSaveable { mutableStateOf(settings.apiKey) }
+    var baseUrlText by rememberSaveable { mutableStateOf(settings.baseUrl) }
+    var selectedModel by rememberSaveable { mutableStateOf(settings.selectedModel) }
     var hideKey by remember { mutableStateOf(true) }
 
     val mdInfo = remember { viewModel.repository.markdownManager.getMarkdownDirectoryInfo() }

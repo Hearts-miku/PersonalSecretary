@@ -225,6 +225,8 @@ class WorkLogRepository(private val context: Context) {
                 } else {
                     onProgress("工作履历评估完毕（无须大幅调整履历文档）")
                 }
+            } else {
+                onProgress("⚠️ AI 未能处理职业履历评估，已跳过")
             }
 
             // 4. Clear Type 2 temp raw notes for target date only
@@ -245,9 +247,26 @@ class WorkLogRepository(private val context: Context) {
         aiRepository.generateUserResume(profileMd, templateStyle, settings)
     }
 
+    private suspend fun getRecentLogsContext(): String {
+        val maxChars = 25000
+        var currentChars = 0
+        return logDao.getAllLogsOnce()
+            .filter { it.summaryMarkdown.isNotBlank() }
+            .takeWhile { log ->
+                val length = log.summaryMarkdown.length + log.date.length + 6
+                if (currentChars + length > maxChars) {
+                    false
+                } else {
+                    currentChars += length
+                    true
+                }
+            }
+            .joinToString("\n\n") { "### ${it.date}\n${it.summaryMarkdown}" }
+    }
+
     suspend fun generateWorkExperiences(): Result<String> = withContext(Dispatchers.IO) {
         val profileMd = markdownManager.getCareerProfileContent()
-        val recentLogs = logDao.getAllLogsOnce().take(30).joinToString("\n\n") { "### ${it.date}\n${it.summaryMarkdown}" }
+        val recentLogs = getRecentLogsContext()
         val combinedContext = "$profileMd\n\n## 近期日常工作日志总结概览\n$recentLogs"
         val settings = getSettings()
         val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
@@ -285,7 +304,7 @@ class WorkLogRepository(private val context: Context) {
 
     suspend fun generateProjectExperiences(): Result<String> = withContext(Dispatchers.IO) {
         val profileMd = markdownManager.getCareerProfileContent()
-        val recentLogs = logDao.getAllLogsOnce().take(30).joinToString("\n\n") { "### ${it.date}\n${it.summaryMarkdown}" }
+        val recentLogs = getRecentLogsContext()
         val combinedContext = "$profileMd\n\n## 近期日常工作日志总结概览\n$recentLogs"
         val settings = getSettings()
         val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
@@ -388,14 +407,16 @@ class WorkLogRepository(private val context: Context) {
         val profileMd = newContent
         markdownManager.writeCareerProfile(profileMd)
         val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
-        versionDao.insertVersion(
-            ExperienceVersionEntity(
-                type = "PROFILE",
-                content = current.markdownContent,
-                timestamp = System.currentTimeMillis(),
-                summaryNote = "手动保存前备份"
+        if (current.markdownContent.isNotBlank()) {
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "PROFILE",
+                    content = current.markdownContent,
+                    timestamp = System.currentTimeMillis(),
+                    summaryNote = "手动保存前备份"
+                )
             )
-        )
+        }
         profileDao.insertOrUpdateProfile(
             current.copy(
                 markdownContent = newContent,
@@ -407,14 +428,16 @@ class WorkLogRepository(private val context: Context) {
     suspend fun updateWorkExperiencesManually(newContent: String) = withContext(Dispatchers.IO) {
         markdownManager.writeWorkExperiences(newContent)
         val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = markdownManager.getCareerProfileContent())
-        versionDao.insertVersion(
-            ExperienceVersionEntity(
-                type = "WORK",
-                content = current.workExperiences,
-                timestamp = System.currentTimeMillis(),
-                summaryNote = "手动保存前备份"
+        if (current.workExperiences.isNotBlank()) {
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "WORK",
+                    content = current.workExperiences,
+                    timestamp = System.currentTimeMillis(),
+                    summaryNote = "手动保存前备份"
+                )
             )
-        )
+        }
         profileDao.insertOrUpdateProfile(
             current.copy(
                 workExperiences = newContent,
@@ -426,14 +449,16 @@ class WorkLogRepository(private val context: Context) {
     suspend fun updateProjectExperiencesManually(newContent: String) = withContext(Dispatchers.IO) {
         markdownManager.writeProjectExperiences(newContent)
         val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = markdownManager.getCareerProfileContent())
-        versionDao.insertVersion(
-            ExperienceVersionEntity(
-                type = "PROJECT",
-                content = current.projectExperiences,
-                timestamp = System.currentTimeMillis(),
-                summaryNote = "手动保存前备份"
+        if (current.projectExperiences.isNotBlank()) {
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "PROJECT",
+                    content = current.projectExperiences,
+                    timestamp = System.currentTimeMillis(),
+                    summaryNote = "手动保存前备份"
+                )
             )
-        )
+        }
         profileDao.insertOrUpdateProfile(
             current.copy(
                 projectExperiences = newContent,
@@ -444,7 +469,7 @@ class WorkLogRepository(private val context: Context) {
 
     // --- Semantic Search ---
 
-    suspend fun performSemanticSearch(query: String): Result<List<com.example.data.ai.GeminiRepository.SemanticSearchResult>> = withContext(Dispatchers.IO) {
+    suspend fun performSemanticSearch(query: String, onAiFailure: ((String) -> Unit)? = null): Result<List<com.example.data.ai.GeminiRepository.SemanticSearchResult>> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext Result.success(emptyList())
 
         val logs = logDao.getAllLogsOnce()
@@ -454,6 +479,10 @@ class WorkLogRepository(private val context: Context) {
         val aiResult = aiRepository.semanticSearchLogs(query, logs, settings)
         if (aiResult.isSuccess && !aiResult.getOrNull().isNullOrEmpty()) {
             return@withContext aiResult
+        }
+        
+        if (aiResult.isFailure) {
+            onAiFailure?.invoke("⚠️ AI 搜索未能处理，已降级为本地关键字搜索")
         }
 
         // 2. Local fallback search
@@ -485,6 +514,10 @@ class WorkLogRepository(private val context: Context) {
 
     suspend fun exportDataToZip(outputStream: java.io.OutputStream) = withContext(Dispatchers.IO) {
         markdownManager.exportAllDataToZip(outputStream)
+    }
+
+    suspend fun getMarkdownDirectoryInfo(): Map<String, String> = withContext(Dispatchers.IO) {
+        markdownManager.getMarkdownDirectoryInfo()
     }
 
     suspend fun clearAllData() = withContext(Dispatchers.IO) {

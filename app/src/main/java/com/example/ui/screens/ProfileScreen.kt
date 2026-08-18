@@ -54,6 +54,7 @@ fun ProfileScreen(
     val allLogs by viewModel.allLogs.collectAsState()
     val isGeneratingWorkExp by viewModel.isGeneratingWorkExp.collectAsState()
     val isGeneratingProjectExp by viewModel.isGeneratingProjectExp.collectAsState()
+    val isImportingFile by viewModel.isImportingFile.collectAsState()
     val aiStatusMessage by viewModel.aiStatusMessage.collectAsState()
 
     val workVersions by viewModel.workVersions.collectAsState()
@@ -287,7 +288,7 @@ fun ProfileScreen(
         }
 
         // Processing Progress
-        if (isGeneratingWorkExp || isGeneratingProjectExp) {
+        if (isGeneratingWorkExp || isGeneratingProjectExp || isImportingFile) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 Text(
@@ -427,6 +428,17 @@ fun ProfileScreen(
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(if (isEditingWorkExp) "保存修改" else "手动编辑")
                                 }
+                                if (isEditingWorkExp) {
+                                    TextButton(onClick = { viewModel.cancelEditingWorkExp() }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "取消",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("取消")
+                                    }
+                                }
                             }
                         }
 
@@ -565,6 +577,17 @@ fun ProfileScreen(
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(if (isEditingProjectExp) "保存修改" else "手动编辑")
                                 }
+                                if (isEditingProjectExp) {
+                                    TextButton(onClick = { viewModel.cancelEditingProjectExp() }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "取消",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("取消")
+                                    }
+                                }
                             }
                         }
 
@@ -647,6 +670,17 @@ fun ProfileScreen(
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(if (isEditingProfile) "保存修改" else "手动编辑")
+                                }
+                                if (isEditingProfile) {
+                                    TextButton(onClick = { viewModel.cancelEditingProfile() }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "取消",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("取消")
+                                    }
                                 }
                             }
                         }

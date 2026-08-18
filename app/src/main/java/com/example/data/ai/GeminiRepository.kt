@@ -400,7 +400,7 @@ class GeminiRepository {
         """.trimIndent()
 
         val res = generateContent(prompt, systemInst, settings)
-        return res.map { jsonText ->
+        return res.mapCatching { jsonText ->
             parseCareerUpdateFromJson(jsonText, currentProfileMarkdown)
         }
     }
@@ -580,7 +580,7 @@ class GeminiRepository {
         targetCategory: String,
         settings: UserSettingsEntity? = null
     ): Result<String> {
-        val cleanContent = AISafetyManager.sanitizeUserInput(rawContent)
+        val cleanContent = AISafetyManager.sanitizeUserInput(rawContent, tagName = "imported_data")
         val prompt = """
             用户导入了一份文件，希望将其格式化并提炼为标准的【$targetCategory】。
             以下是用户导入的原始内容：
@@ -668,21 +668,17 @@ class GeminiRepository {
     }
 
     private fun parseCareerUpdateFromJson(jsonStr: String, fallbackProfile: String): CareerProfileUpdateResult {
-        try {
-            val cleanJson = extractJsonSubstring(jsonStr)
-            val obj = JSONObject(cleanJson)
-            val shouldUpdate = obj.optBoolean("shouldUpdate", false)
-            val reason = obj.optString("reason", "")
-            val updatedMd = obj.optString("updatedProfileMarkdown", "")
-            
-            return CareerProfileUpdateResult(
-                shouldUpdate = shouldUpdate,
-                reason = reason,
-                updatedProfileMarkdown = if (shouldUpdate && updatedMd.isNotBlank()) updatedMd else fallbackProfile
-            )
-        } catch (e: Exception) {
-            return CareerProfileUpdateResult(false, "解析响应失败: ${e.message}", fallbackProfile)
-        }
+        val cleanJson = extractJsonSubstring(jsonStr)
+        val obj = JSONObject(cleanJson)
+        val shouldUpdate = obj.optBoolean("shouldUpdate", false)
+        val reason = obj.optString("reason", "")
+        val updatedMd = obj.optString("updatedProfileMarkdown", "")
+        
+        return CareerProfileUpdateResult(
+            shouldUpdate = shouldUpdate,
+            reason = reason,
+            updatedProfileMarkdown = if (shouldUpdate && updatedMd.isNotBlank()) updatedMd else fallbackProfile
+        )
     }
 
     private fun extractJsonSubstring(text: String): String {
