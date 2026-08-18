@@ -62,6 +62,12 @@ fun ProfileScreen(
     var activeTab by remember { mutableStateOf(0) } // 0 = 工作经历, 1 = 项目经历, 2 = 职业档案全貌
     val editingProfileText by viewModel.editingProfileText.collectAsState()
     val isEditingProfile = editingProfileText != null
+    
+    val editingWorkExpText by viewModel.editingWorkExpText.collectAsState()
+    val isEditingWorkExp = editingWorkExpText != null
+    
+    val editingProjectExpText by viewModel.editingProjectExpText.collectAsState()
+    val isEditingProjectExp = editingProjectExpText != null
 
     // Dialog state for Version History & Diff
     var showHistoryDialogType by remember { mutableStateOf<String?>(null) } // "WORK" or "PROJECT" or null
@@ -332,15 +338,9 @@ fun ProfileScreen(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "AI 总结的工作经历",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-
                             Row(
                                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -412,32 +412,51 @@ fun ProfileScreen(
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(if (workExpContent.isBlank()) "AI 提炼工作经历" else "重新提炼")
                                 }
+                                TextButton(onClick = {
+                                    if (isEditingWorkExp) {
+                                        viewModel.saveWorkExpManually(editingWorkExpText ?: "")
+                                    } else {
+                                        viewModel.startEditingWorkExp(workExpContent)
+                                    }
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "编辑",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(if (isEditingWorkExp) "保存修改" else "手动编辑")
+                                }
                             }
                         }
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                        if (workExpContent.isBlank()) {
+                        if (isEditingWorkExp) {
+                            OutlinedTextField(
+                                value = editingWorkExpText ?: "",
+                                onValueChange = { viewModel.updateEditingWorkExpText(it) },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        } else if (workExpContent.isBlank()) {
                             Box(
                                 modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
-                                        text = "尚未生成工作经历总结",
+                                        text = "尚未生成工作经历总结，请使用右上角功能或直接导入",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { viewModel.generateWorkExperiences() }) {
-                                            Text("AI 智能提炼")
-                                        }
-                                        OutlinedButton(onClick = { filePickerLauncher.launch("*/*") }) {
-                                            Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("导入 txt/md 文件")
-                                        }
+                                    OutlinedButton(onClick = { filePickerLauncher.launch("*/*") }) {
+                                        Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("导入 txt/md 文件")
                                     }
                                 }
                             }
@@ -458,15 +477,9 @@ fun ProfileScreen(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "AI 总结的项目经历",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-
                             Row(
                                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -523,7 +536,6 @@ fun ProfileScreen(
                                         Text("查看差异")
                                     }
                                 }
-
                                 Button(
                                     onClick = { viewModel.generateProjectExperiences() },
                                     enabled = !isGeneratingProjectExp,
@@ -538,32 +550,51 @@ fun ProfileScreen(
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(if (projectExpContent.isBlank()) "AI 提取项目经历" else "重新提取")
                                 }
+                                TextButton(onClick = {
+                                    if (isEditingProjectExp) {
+                                        viewModel.saveProjectExpManually(editingProjectExpText ?: "")
+                                    } else {
+                                        viewModel.startEditingProjectExp(projectExpContent)
+                                    }
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "编辑",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(if (isEditingProjectExp) "保存修改" else "手动编辑")
+                                }
                             }
                         }
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                        if (projectExpContent.isBlank()) {
+                        if (isEditingProjectExp) {
+                            OutlinedTextField(
+                                value = editingProjectExpText ?: "",
+                                onValueChange = { viewModel.updateEditingProjectExpText(it) },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        } else if (projectExpContent.isBlank()) {
                             Box(
                                 modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
-                                        text = "尚未提取项目经历",
+                                        text = "尚未提取项目经历总结，请使用右上角功能或直接导入",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { viewModel.generateProjectExperiences() }) {
-                                            Text("AI 智能提取")
-                                        }
-                                        OutlinedButton(onClick = { filePickerLauncher.launch("*/*") }) {
-                                            Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("导入 txt/md 文件")
-                                        }
+                                    OutlinedButton(onClick = { filePickerLauncher.launch("*/*") }) {
+                                        Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("导入 txt/md 文件")
                                     }
                                 }
                             }
@@ -652,6 +683,7 @@ fun ProfileScreen(
     if (showImportTypeDialog && pendingImportContent != null) {
         val content = pendingImportContent!!
         val fileName = pendingImportFileName
+        var selectedTarget by remember { mutableIntStateOf(0) }
 
         AlertDialog(
             onDismissRequest = {
@@ -660,72 +692,89 @@ fun ProfileScreen(
             },
             title = {
                 Text(
-                    text = "选择文件导入目标",
+                    text = "导入文件",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = "已读取文件: $fileName (${content.length} 字)",
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.primary
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "请选择将此文本初始化写入哪一项记录？导入后将自动保留历史版本并可随时查看差异点。",
+                        text = "1. 请选择导入目标：",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    
+                    Column(Modifier.fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            RadioButton(selected = selectedTarget == 0, onClick = { selectedTarget = 0 })
+                            Text("💼 工作经历", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            RadioButton(selected = selectedTarget == 1, onClick = { selectedTarget = 1 })
+                            Text("🚀 项目经历", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            RadioButton(selected = selectedTarget == 2, onClick = { selectedTarget = 2 })
+                            Text("📄 职业档案全貌", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(4.dp))
-
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.importWorkExperiences(content, fileName)
-                            showImportTypeDialog = false
-                            pendingImportContent = null
-                            activeTab = 0
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text("💼 导入初始化为【工作经历】")
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.importProjectExperiences(content, fileName)
-                            showImportTypeDialog = false
-                            pendingImportContent = null
-                            activeTab = 1
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text("🚀 导入初始化为【项目经历】")
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.saveCareerProfileManually(content)
-                            showImportTypeDialog = false
-                            pendingImportContent = null
-                            activeTab = 2
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text("📄 导入初始化为【职业档案全貌】")
-                    }
+                    Text(
+                        text = "2. 请选择导入方式：\n• 直接导入：保留原始文本，不做任何修改。\n• 导入并提炼：使用 AI 自动格式化、提炼内容并优化排版结构。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             },
-            confirmButton = {},
+            confirmButton = {
+                Button(
+                    onClick = {
+                        when (selectedTarget) {
+                            0 -> viewModel.importWorkExperiences(content, fileName, true)
+                            1 -> viewModel.importProjectExperiences(content, fileName, true)
+                            2 -> viewModel.importCareerProfile(content, fileName, true)
+                        }
+                        showImportTypeDialog = false
+                        pendingImportContent = null
+                        activeTab = selectedTarget
+                    }
+                ) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("导入并提炼")
+                }
+            },
             dismissButton = {
-                TextButton(onClick = {
-                    showImportTypeDialog = false
-                    pendingImportContent = null
-                }) {
-                    Text("取消")
+                OutlinedButton(
+                    onClick = {
+                        when (selectedTarget) {
+                            0 -> viewModel.importWorkExperiences(content, fileName, false)
+                            1 -> viewModel.importProjectExperiences(content, fileName, false)
+                            2 -> viewModel.importCareerProfile(content, fileName, false)
+                        }
+                        showImportTypeDialog = false
+                        pendingImportContent = null
+                        activeTab = selectedTarget
+                    }
+                ) {
+                    Text("直接导入")
+                }
+                
+                TextButton(
+                    onClick = {
+                        showImportTypeDialog = false
+                        pendingImportContent = null
+                    },
+                    modifier = Modifier.padding(end = 8.dp)
+                ) {
+                    Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         )

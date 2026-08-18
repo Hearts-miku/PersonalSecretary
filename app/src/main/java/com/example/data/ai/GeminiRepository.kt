@@ -572,6 +572,38 @@ class GeminiRepository {
         }
     }
 
+    /**
+     * AI Feature: Refine imported content based on target category.
+     */
+    suspend fun refineImportedContent(
+        rawContent: String,
+        targetCategory: String,
+        settings: UserSettingsEntity? = null
+    ): Result<String> {
+        val cleanContent = AISafetyManager.sanitizeUserInput(rawContent)
+        val prompt = """
+            用户导入了一份文件，希望将其格式化并提炼为标准的【$targetCategory】。
+            以下是用户导入的原始内容：
+            <imported_data>
+            $cleanContent
+            </imported_data>
+
+            请你作为资深的技术专家与HR，对这些内容进行整理、提炼和润色：
+            1. 剔除无效或冗余信息，突出核心价值。
+            2. 使用专业的书面表达。
+            3. 如果是工作经历或项目经历，请采用清晰的要点列举结构（如 STAR 法则）。
+            4. 保持隐私脱敏（姓名、电话等使用占位符）。
+            5. 请直接输出提炼后的 Markdown 内容，不要包含任何额外的问候语、解释或 json 包装。
+        """.trimIndent()
+        
+        val systemInst = """
+            ${AISafetyManager.SYSTEM_GUARDRAIL_PROMPT}
+            你是资深技术专家，负责将用户导入的文本提炼为结构化、高质量的简历素材。
+        """.trimIndent()
+        
+        return generateContent(prompt, systemInst, settings)
+    }
+
     // --- Helper JSON Parsers ---
 
     data class SemanticSearchResult(

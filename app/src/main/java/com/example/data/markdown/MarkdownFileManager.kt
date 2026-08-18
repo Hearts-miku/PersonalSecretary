@@ -169,6 +169,13 @@ class MarkdownFileManager(private val context: Context) {
         return result
     }
 
+    fun clearAllData() {
+        if (baseDir.exists()) {
+            baseDir.deleteRecursively()
+            baseDir.mkdirs()
+        }
+    }
+
     /**
      * Export all data to a zip file
      */

@@ -15,6 +15,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -414,13 +416,78 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-
                 Text(
                     text = "• 严防提示词注入：输入文本隔离在 XML 专属数据标签内，自动过滤越权指令。\n• 严防幻觉：强制AI只根据真实日志提炼，严禁臆造工作内容与编造简历经历。\n• 隐私脱敏：生成简历强制使用 [姓名]、[电话]、[邮箱] 等标准占位符。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+
+        // Section 5: Data Management
+        var showClearDataDialog by remember { mutableStateOf(false) }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteForever,
+                        contentDescription = "数据管理",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "危险操作",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Text(
+                    text = "一键清除所有工作日志、履历档案和本地记录。该操作不可逆，请谨慎操作。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Button(
+                    onClick = { showClearDataDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth().testTag("clear_all_data_btn")
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("清空所有数据")
+                }
+            }
+        }
+
+        if (showClearDataDialog) {
+            AlertDialog(
+                onDismissRequest = { showClearDataDialog = false },
+                title = { Text("确认清空所有数据？", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)) },
+                text = { Text("这将永久删除所有的工作日志、待办事项、职业经历版本以及所有的本地 Markdown 文件。该操作无法撤销！") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.clearAllData()
+                            showClearDataDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("确认")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearDataDialog = false }) {
+                        Text("取消")
+                    }
+                }
+            )
         }
     }
 }

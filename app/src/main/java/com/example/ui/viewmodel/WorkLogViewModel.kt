@@ -28,9 +28,15 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     private val _selectedDate = MutableStateFlow(repository.getTodayString())
     val selectedDate: StateFlow<String> = _selectedDate.asStateFlow()
 
-    // Resume State
+    // Editing States
     private val _editingProfileText = MutableStateFlow<String?>(null)
     val editingProfileText: StateFlow<String?> = _editingProfileText.asStateFlow()
+    
+    private val _editingWorkExpText = MutableStateFlow<String?>(null)
+    val editingWorkExpText: StateFlow<String?> = _editingWorkExpText.asStateFlow()
+    
+    private val _editingProjectExpText = MutableStateFlow<String?>(null)
+    val editingProjectExpText: StateFlow<String?> = _editingProjectExpText.asStateFlow()
 
     private val _resumeMarkdown = MutableStateFlow("")
     val resumeMarkdown: StateFlow<String> = _resumeMarkdown.asStateFlow()
@@ -267,17 +273,57 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun importWorkExperiences(content: String, sourceFileName: String) {
+    fun importWorkExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
         viewModelScope.launch {
-            repository.importWorkExperiences(content, sourceFileName)
-            showSnack("工作经历文件已导入！")
+            _isProcessingAI.value = refineWithAi
+            try {
+                val finalContent = if (refineWithAi) {
+                    val res = repository.aiRepository.refineImportedContent(content, "工作经历", repository.getSettings())
+                    res.getOrNull() ?: content
+                } else {
+                    content
+                }
+                repository.importWorkExperiences(finalContent, sourceFileName)
+                showSnack(if (refineWithAi) "工作经历已由 AI 提炼并导入！" else "工作经历文件已直接导入！")
+            } finally {
+                _isProcessingAI.value = false
+            }
         }
     }
 
-    fun importProjectExperiences(content: String, sourceFileName: String) {
+    fun importProjectExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
         viewModelScope.launch {
-            repository.importProjectExperiences(content, sourceFileName)
-            showSnack("项目经历文件已导入！")
+            _isProcessingAI.value = refineWithAi
+            try {
+                val finalContent = if (refineWithAi) {
+                    val res = repository.aiRepository.refineImportedContent(content, "项目经历", repository.getSettings())
+                    res.getOrNull() ?: content
+                } else {
+                    content
+                }
+                repository.importProjectExperiences(finalContent, sourceFileName)
+                showSnack(if (refineWithAi) "项目经历已由 AI 提炼并导入！" else "项目经历文件已直接导入！")
+            } finally {
+                _isProcessingAI.value = false
+            }
+        }
+    }
+
+    fun importCareerProfile(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
+        viewModelScope.launch {
+            _isProcessingAI.value = refineWithAi
+            try {
+                val finalContent = if (refineWithAi) {
+                    val res = repository.aiRepository.refineImportedContent(content, "职业档案全貌", repository.getSettings())
+                    res.getOrNull() ?: content
+                } else {
+                    content
+                }
+                repository.updateCareerProfileManually(finalContent)
+                showSnack(if (refineWithAi) "职业档案全貌已由 AI 提炼并导入！" else "职业档案全貌文件已直接导入！")
+            } finally {
+                _isProcessingAI.value = false
+            }
         }
     }
 
@@ -297,7 +343,47 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.updateCareerProfileManually(content)
             _editingProfileText.value = null
-            showSnack("职业履历文档已更新")
+            showSnack("职业履历文档已手动更新")
+        }
+    }
+
+    fun startEditingWorkExp(initialText: String) {
+        _editingWorkExpText.value = initialText
+    }
+
+    fun updateEditingWorkExpText(text: String) {
+        _editingWorkExpText.value = text
+    }
+
+    fun cancelEditingWorkExp() {
+        _editingWorkExpText.value = null
+    }
+
+    fun saveWorkExpManually(content: String) {
+        viewModelScope.launch {
+            repository.updateWorkExperiencesManually(content)
+            _editingWorkExpText.value = null
+            showSnack("工作经历文档已手动更新")
+        }
+    }
+
+    fun startEditingProjectExp(initialText: String) {
+        _editingProjectExpText.value = initialText
+    }
+
+    fun updateEditingProjectExpText(text: String) {
+        _editingProjectExpText.value = text
+    }
+
+    fun cancelEditingProjectExp() {
+        _editingProjectExpText.value = null
+    }
+
+    fun saveProjectExpManually(content: String) {
+        viewModelScope.launch {
+            repository.updateProjectExperiencesManually(content)
+            _editingProjectExpText.value = null
+            showSnack("项目经历文档已手动更新")
         }
     }
 
@@ -352,6 +438,20 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     outputStream.close()
                 }
+            }
+        }
+    }
+
+    fun clearAllData() {
+        viewModelScope.launch {
+            try {
+                repository.clearAllData()
+                _rawInputText.value = ""
+                _resumeMarkdown.value = ""
+                _editingProfileText.value = null
+                showSnack("所有记录的数据已清空")
+            } catch (e: Exception) {
+                showSnack("清空失败: ${e.message}")
             }
         }
     }

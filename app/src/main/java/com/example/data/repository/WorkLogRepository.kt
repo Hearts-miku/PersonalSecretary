@@ -404,6 +404,44 @@ class WorkLogRepository(private val context: Context) {
         )
     }
 
+    suspend fun updateWorkExperiencesManually(newContent: String) = withContext(Dispatchers.IO) {
+        markdownManager.writeWorkExperiences(newContent)
+        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = markdownManager.getCareerProfileContent())
+        versionDao.insertVersion(
+            ExperienceVersionEntity(
+                type = "WORK",
+                content = current.workExperiences,
+                timestamp = System.currentTimeMillis(),
+                summaryNote = "手动保存前备份"
+            )
+        )
+        profileDao.insertOrUpdateProfile(
+            current.copy(
+                workExperiences = newContent,
+                lastUpdated = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun updateProjectExperiencesManually(newContent: String) = withContext(Dispatchers.IO) {
+        markdownManager.writeProjectExperiences(newContent)
+        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = markdownManager.getCareerProfileContent())
+        versionDao.insertVersion(
+            ExperienceVersionEntity(
+                type = "PROJECT",
+                content = current.projectExperiences,
+                timestamp = System.currentTimeMillis(),
+                summaryNote = "手动保存前备份"
+            )
+        )
+        profileDao.insertOrUpdateProfile(
+            current.copy(
+                projectExperiences = newContent,
+                lastUpdated = System.currentTimeMillis()
+            )
+        )
+    }
+
     // --- Semantic Search ---
 
     suspend fun performSemanticSearch(query: String): Result<List<com.example.data.ai.GeminiRepository.SemanticSearchResult>> = withContext(Dispatchers.IO) {
@@ -447,5 +485,16 @@ class WorkLogRepository(private val context: Context) {
 
     suspend fun exportDataToZip(outputStream: java.io.OutputStream) = withContext(Dispatchers.IO) {
         markdownManager.exportAllDataToZip(outputStream)
+    }
+
+    suspend fun clearAllData() = withContext(Dispatchers.IO) {
+        // Clear DB
+        logDao.deleteAllLogs()
+        todoDao.deleteAllTodos()
+        profileDao.deleteAllProfiles()
+        versionDao.deleteAllVersions()
+
+        // Clear files
+        markdownManager.clearAllData()
     }
 }

@@ -16,6 +16,9 @@ interface DailyWorkLogDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(log: DailyWorkLogEntity)
+
+    @Query("DELETE FROM daily_work_logs")
+    suspend fun deleteAllLogs()
 }
 
 @Dao
@@ -37,6 +40,9 @@ interface TodoItemDao {
 
     @Query("DELETE FROM todo_items WHERE id = :id")
     suspend fun deleteById(id: Int)
+
+    @Query("DELETE FROM todo_items")
+    suspend fun deleteAllTodos()
 }
 
 @Dao
@@ -49,6 +55,9 @@ interface UserCareerProfileDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateProfile(profile: UserCareerProfileEntity)
+
+    @Query("DELETE FROM user_career_profile")
+    suspend fun deleteAllProfiles()
 }
 
 @Dao
@@ -76,4 +85,7 @@ interface ExperienceVersionDao {
 
     @Query("DELETE FROM experience_versions WHERE id = :id")
     suspend fun deleteVersionById(id: Int)
+
+    @Query("DELETE FROM experience_versions")
+    suspend fun deleteAllVersions()
 }
