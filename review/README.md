@@ -1,14 +1,11 @@
 # 代码审计报告 — PersonalSecretary / WorkLogResume
 
-**审计对象**：`main` @ [`fa9c62c`](https://github.com/Hearts-miku/PersonalSecretary/commit/fa9c62c) `feat(profile): add AI content refinement and manual edit support`
-**更新日期**：2026-08-13（第 5 轮）
+**审计对象**：`main` @ [`47d4f26`](https://github.com/Hearts-miku/PersonalSecretary/commit/47d4f26) `refactor: update API key encoding and AI safety`
+**更新日期**：2026-08-19（第 7 轮）
 **性质**：只读审计
 
-> 本分支**只存放审计文档，不含源码**。文档中的代码链接指向 `fa9c62c` 这个提交，
-> 行号因此长期有效，不会随 main 后续变动而漂移。
->
-> 每轮**全量重写**，始终描述当前代码的真实状态。发现编号（`P1-4`、`N-5` …）跨轮次
-> 保持稳定；已解决项移入 [07-已修复与回归记录.md](07-已修复与回归记录.md)。
+> 本分支**只存放审计文档，不含源码**。代码链接指向 `47d4f26`，行号长期有效。
+> 每轮全量重写；发现编号跨轮次稳定，已解决项移入 [07-已修复与回归记录.md](07-已修复与回归记录.md)。
 
 ---
 
@@ -16,13 +13,13 @@
 
 | 文件 | 内容 |
 |---|---|
-| [01-P0-阻断项.md](01-P0-阻断项.md) | **0 项**。首次全部清零 |
-| [02-P1-功能与安全.md](02-P1-功能与安全.md) | 6 项。凭据处理、升级路径、提示词隔离 |
-| [03-P2-健壮性与体验.md](03-P2-健壮性与体验.md) | 21 项 |
+| [01-P0-阻断项.md](01-P0-阻断项.md) | **0 项** |
+| [02-P1-功能与安全.md](02-P1-功能与安全.md) | 3 项 |
+| [03-P2-健壮性与体验.md](03-P2-健壮性与体验.md) | 17 项 |
 | [04-P3-清理项.md](04-P3-清理项.md) | 死代码、误提交文件、构建配置 |
 | [05-架构观察.md](05-架构观察.md) | 结构性问题 |
 | [06-修复顺序建议.md](06-修复顺序建议.md) | 优先级与批次划分 |
-| [07-已修复与回归记录.md](07-已修复与回归记录.md) | 已解决 **36 项**；含两次回归事件的成因 |
+| [07-已修复与回归记录.md](07-已修复与回归记录.md) | 已解决 **51 项**；含三次回归事件 |
 
 ---
 
@@ -30,56 +27,45 @@
 
 | 严重级 | 未决 | 本轮变化 |
 |---|---|---|
-| P0 | **0** | 两个编译阻断已解决；P0-6 破坏性迁移已换成真实 Migration |
-| P1 | **6** | 解决 2 项；新引入 2 项；1 项回归 |
-| P2 | **21** | 解决 2 项；新引入 7 项 |
-| P3 | — | 新增 1 个误提交文件 |
+| P0 | **0** | 第 6 轮引入的 4 个编译错误全部修复 |
+| P1 | **3** | 解决 4 项；新增 1 项（语义搜索标签缺口） |
+| P2 | **17** | 解决 4 项 |
+| P3 | — | 无变化 |
 
-### 里程碑
+### 本轮（第 6+7 轮）评价
 
-**P0 首次清零。** 上一轮遗留的两个编译阻断（`CryptoManager` 缺失、`AndroidManifest`
-引用已删除的主题）都已修复，`fallbackToDestructiveMigration` 也换成了真实的
-`MIGRATION_5_6`——首轮审计中最要紧的那批问题至此全部收口。
+第 6 轮（`378a406`）一次性修了 13 项，但引入 4 个编译错误；第 7 轮（`47d4f26`）把它们全部补齐。
+合起来是一次高质量的推进：
 
-### 但升级路径成了新的风险集中区
+- **提示词隔离约定重新收口** —— `sanitizeUserInput` 增加 `tagName` 参数，8 处默认调用与
+  `<user_raw_content>` 对应，`refineImportedContent` 与 `<imported_data>` 对应。标签配对已
+  逐条核对，[N-6](07-已修复与回归记录.md) 是真修复而非仅让其编译通过。
+- **「失败被包装成成功」三处一次收口** —— P2-2、P2-9、N-7 统一用 `⚠️` 前缀提示降级，
+  这正是 [05-架构观察](05-架构观察.md) 第 4 节指出的缺失约定。
+- **N-5 的修法正确** —— `v1:` 前缀 + 无前缀原样返回，存量明文 Key 不再被 Base64 解码损坏。
 
-本轮引入的两件事叠加在一起，构成当前最需要关注的地方：
+### 当前唯一的高风险面
 
-1. [`CryptoManager`](02-P1-功能与安全.md) 用 Base64 冒充加密，且**会静默损坏存量用户的 API Key**
-2. [迁移从未被执行验证过](02-P1-功能与安全.md)，而 `fallbackToDestructiveMigration` 已移除——
-   schema 一旦不匹配就是硬崩溃，不再是静默清库
+[P1-15](02-P1-功能与安全.md)：`MIGRATION_5_6` **至今没有在真实 v5 数据库上执行过**，而
+`fallbackToDestructiveMigration` 已移除——schema 一旦对不上就是启动崩溃，用户只能卸载重装。
 
-两者都只在「老用户升级」这条路径上触发，而这条路径**至今没有被构建或运行验证过**
-（`app/schemas/6.json` 缺失即为佐证）。
+`app/schemas/6.json` 仍然缺失是个信号：数据库版本已是 6，`exportSchema = true` 且
+`room.schemaLocation` 已配置，构建时 Room 本应生成该文件。它不在，意味着要么仍未实际构建，
+要么构建产物没有提交。
 
-### 新功能的质量
-
-本轮新增「AI 提炼导入内容」「工作/项目经历手动编辑」「清空所有数据」三项功能。
-手动编辑复用了 P1-14 已验证的 ViewModel 状态模式，导入对话框重构为「选目标 + 选方式」，
-清空数据有二次确认且保留 API Key——这些都做得不错。
-
-问题集中在两点：**新的 AI 调用绕开了项目自己的提示词隔离约定**（用了 `<imported_data>`
-标签，而 sanitizer 只认 `<user_raw_content>`），以及**三个 `cancelEditing*` 函数写了却没接**，
-导致编辑态没有取消出口。
+这条从第 4 轮悬置至今，是 [06-修复顺序建议](06-修复顺序建议.md) 批次 1 的全部内容。
 
 ---
 
 ## 审计覆盖
 
-逐行阅读：
-
-- 构建：`build.gradle.kts`（root + app）、`settings.gradle.kts`、`gradle.properties`、`libs.versions.toml`、`.env.example`、`AndroidManifest.xml`、`proguard-rules.pro`、`res/xml/*`
-- 数据层：`AppDatabase.kt`、`Daos.kt`、`Entities.kt`、`CryptoManager.kt`、`WorkLogRepository.kt`、`MarkdownFileManager.kt`、`DiffUtils.kt`、`AutoSummaryScheduler.kt`
-- AI 层：`GeminiRepository.kt`、`AISafetyManager.kt`
-- UI 层：`MainActivity.kt`、`MainScreen.kt`、`Screen.kt`、6 个 Screen、`MarkdownText.kt`、`CustomCalendarView.kt`、`Theme.kt`、`Type.kt`
-- 测试：`app/src/test/*`
-
+逐行阅读：构建配置、数据层（含 `CryptoManager`）、AI 层、全部 UI 层、测试。
 未覆盖：`Color.kt`（仅色值常量）、图片资源、`.idea/`。
 
 ## 未执行的验证
 
-**本审计从未编译或运行过代码**（仓库无 Gradle wrapper）。以下结论尤其需要实机复现：
+**本审计从未编译或运行过代码**（仓库无 Gradle wrapper）。以下需实机复现：
 
-- **[N-5](02-P1-功能与安全.md) 存量 Key 被 Base64 解码损坏** —— 是否触发取决于具体 key 是否恰好构成合法 Base64，需用真实 key 验证
-- **[P1-15](02-P1-功能与安全.md) 迁移正确性** —— CREATE TABLE 语句已与实体逐列比对一致，但需在真实 v5 数据库上执行一次
-- **[P2-4](03-P2-健壮性与体验.md) 日历跨月**、**[N-8](03-P2-健壮性与体验.md) 进度标志竞态** —— 均依赖运行时时序
+- **[P1-15](02-P1-功能与安全.md) 迁移正确性** —— CREATE TABLE 已与实体逐列比对一致，未发现缺陷，但需在真实 v5 库上跑一次
+- **[P2-4](03-P2-健壮性与体验.md) 日历跨月**、**[N-15](03-P2-健壮性与体验.md) `takeWhile` 截断** —— 依赖运行时数据
+- 第 6/7 轮的编译修复已逐项静态核对（参数签名、方法名、import 齐备），但未经编译器确认
