@@ -9,13 +9,13 @@ object AISafetyManager {
     /**
      * Sanitizes raw user input to prevent prompt injection or prompt escape attacks.
      */
-    fun sanitizeUserInput(input: String, maxLength: Int = 30000): String {
+    fun sanitizeUserInput(input: String, maxLength: Int = 30000, tagName: String = "user_raw_content"): String {
         if (input.isBlank()) return ""
         val truncated = if (input.length > maxLength) input.take(maxLength) + "\n...[内容超出最大字符限制，自动截断]" else input
         
         var clean = truncated
-            .replace("<user_raw_content>", "&lt;user_raw_content&gt;")
-            .replace("</user_raw_content>", "&lt;/user_raw_content&gt;")
+            .replace("<$tagName>", "&lt;$tagName&gt;")
+            .replace("</$tagName>", "&lt;/$tagName&gt;")
 
         return clean.trim()
     }

@@ -30,7 +30,7 @@ class WorkLogRepository(private val context: Context) {
     val allTodosFlow: Flow<List<TodoItemEntity>> = todoDao.getAllTodos()
     val profileFlow: Flow<UserCareerProfileEntity?> = profileDao.getProfileFlow()
     val settingsFlow: Flow<UserSettingsEntity?> = settingsDao.getSettingsFlow().map {
-        it?.copy(apiKey = com.example.data.local.CryptoManager.decrypt(it.apiKey))
+        it?.copy(apiKey = com.example.data.local.CryptoManager.decode(it.apiKey))
     }
     val workVersionsFlow: Flow<List<ExperienceVersionEntity>> = versionDao.getVersionsByTypeFlow("WORK")
     val projectVersionsFlow: Flow<List<ExperienceVersionEntity>> = versionDao.getVersionsByTypeFlow("PROJECT")
@@ -41,11 +41,11 @@ class WorkLogRepository(private val context: Context) {
 
     suspend fun getSettings(): UserSettingsEntity = withContext(Dispatchers.IO) {
         val s = settingsDao.getSettings() ?: UserSettingsEntity().also { settingsDao.saveSettings(it) }
-        s.copy(apiKey = com.example.data.local.CryptoManager.decrypt(s.apiKey))
+        s.copy(apiKey = com.example.data.local.CryptoManager.decode(s.apiKey))
     }
 
     suspend fun saveSettings(settings: UserSettingsEntity) = withContext(Dispatchers.IO) {
-        settingsDao.saveSettings(settings.copy(apiKey = com.example.data.local.CryptoManager.encrypt(settings.apiKey)))
+        settingsDao.saveSettings(settings.copy(apiKey = com.example.data.local.CryptoManager.encode(settings.apiKey)))
     }
 
     suspend fun restoreLogsFromMarkdownIfNeeded() = withContext(Dispatchers.IO) {

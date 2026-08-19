@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -49,7 +50,12 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
     var selectedModel by rememberSaveable { mutableStateOf(settings.selectedModel) }
     var hideKey by remember { mutableStateOf(true) }
 
-    val mdInfo = remember { viewModel.repository.markdownManager.getMarkdownDirectoryInfo() }
+    val mdInfo by viewModel.mdInfo.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadMdInfo()
+    }
+
     val scrollState = rememberScrollState()
 
     Column(
