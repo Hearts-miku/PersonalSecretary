@@ -37,10 +37,10 @@ data class UserCareerProfileEntity(
 data class UserSettingsEntity(
     @PrimaryKey val id: Int = 1,
     val apiKey: String = "",
-    val baseUrl: String = "https://generativelanguage.googleapis.com/",
-    val selectedModel: String = "gemini-2.5-flash",
+    val baseUrl: String = "https://api.your-provider.com/v1/",
+    val selectedModel: String = "my-custom-model",
     val themeMode: String = "SYSTEM", // "SYSTEM", "LIGHT", "DARK"
-    val apiProvider: String = "GEMINI" // "GEMINI", "OPENAI", "ANTHROPIC", "CUSTOM"
+    val apiProvider: String = "CUSTOM" // "GEMINI", "OPENAI", "ANTHROPIC", "CUSTOM"
 )
 
 @Entity(tableName = "experience_versions")

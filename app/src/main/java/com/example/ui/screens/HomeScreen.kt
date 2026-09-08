@@ -29,15 +29,6 @@ fun HomeScreen(
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
     val aiStatusMessage by viewModel.aiStatusMessage.collectAsState()
 
-    val quickTags = listOf(
-        "完成了核心功能",
-        "修复阻断性Bug",
-        "与团队讨论技术方案",
-        "撰写技术设计文档",
-        "重构并优化模块代码",
-        "上线发布并监控数据"
-    )
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -142,23 +133,6 @@ fun HomeScreen(
             )
         }
 
-        // Quick Tag Suggestion Chips
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            items(quickTags) { tag ->
-                FilterChip(
-                    selected = false,
-                    onClick = {
-                        val newText = if (rawText.isBlank()) "• $tag " else "$rawText\n• $tag "
-                        viewModel.onRawInputChanged(newText)
-                    },
-                    label = { Text(tag, style = MaterialTheme.typography.labelSmall) }
-                )
-            }
-        }
-
         // Main User Input Area
         OutlinedTextField(
             value = rawText,
@@ -169,7 +143,7 @@ fun HomeScreen(
                 .testTag("home_input_textfield"),
             placeholder = {
                 Text(
-                    text = "在此输入您今天完成的任何工作内容、技术思考、解决的问题或任务记录...\n\n示例：\n• 重构了用户模块的 Room 数据库结构，提升查询性能30%\n• 完成了 Gemini API 接口防注入过滤处理\n• 与产品经理沟通明天的上线计划",
+                    text = "在此输入您今天完成的任何工作内容、技术思考、解决的问题或任务记录...\n\n示例：\n• 重构了用户模块的 Room 数据库结构，提升查询性能30%\n• 完成了 AI 接口防注入过滤处理\n• 与产品经理沟通明天的上线计划",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )

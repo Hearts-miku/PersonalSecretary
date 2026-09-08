@@ -219,70 +219,15 @@ fun ProfileScreen(
                         ),
                         modifier = Modifier.testTag("upload_file_header_chip")
                     )
-                }
-            }
-        }
-
-        // Secondary Page Entry Card: "我的简历" (My Resume)
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Description,
-                                contentDescription = "简历",
-                                tint = MaterialTheme.colorScheme.onSecondary,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-
-                    Column {
-                        Text(
-                            text = "我的简历生成器",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                        Text(
-                            text = "基于 AI 总结的履历，一键脱敏导出专业简历",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-
-                Button(
-                    onClick = onNavigateToResume,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                    modifier = Modifier.testTag("open_resume_page_btn")
-                ) {
-                    Text("进入简历")
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "查看",
-                        modifier = Modifier.size(16.dp)
+                    AssistChip(
+                        onClick = onNavigateToResume,
+                        label = { Text("生成简历") },
+                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                        modifier = Modifier.testTag("open_resume_page_btn")
                     )
                 }
             }
@@ -305,17 +250,17 @@ fun ProfileScreen(
             Tab(
                 selected = activeTab == 0,
                 onClick = { activeTab = 0 },
-                text = { Text("💼 工作经历", fontWeight = FontWeight.Bold) }
+                text = { Text("工作经历", fontWeight = FontWeight.Bold) }
             )
             Tab(
                 selected = activeTab == 1,
                 onClick = { activeTab = 1 },
-                text = { Text("🚀 项目经历", fontWeight = FontWeight.Bold) }
+                text = { Text("项目经历", fontWeight = FontWeight.Bold) }
             )
             Tab(
                 selected = activeTab == 2,
                 onClick = { activeTab = 2 },
-                text = { Text("📄 职业档案", fontWeight = FontWeight.Bold) }
+                text = { Text("职业档案", fontWeight = FontWeight.Bold) }
             )
         }
 
@@ -748,15 +693,15 @@ fun ProfileScreen(
                     Column(Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             RadioButton(selected = selectedTarget == 0, onClick = { selectedTarget = 0 })
-                            Text("💼 工作经历", style = MaterialTheme.typography.bodyMedium)
+                            Text("工作经历", style = MaterialTheme.typography.bodyMedium)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             RadioButton(selected = selectedTarget == 1, onClick = { selectedTarget = 1 })
-                            Text("🚀 项目经历", style = MaterialTheme.typography.bodyMedium)
+                            Text("项目经历", style = MaterialTheme.typography.bodyMedium)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             RadioButton(selected = selectedTarget == 2, onClick = { selectedTarget = 2 })
-                            Text("📄 职业档案全貌", style = MaterialTheme.typography.bodyMedium)
+                            Text("职业档案全貌", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
 

@@ -49,9 +49,9 @@ class GeminiRepository {
             return if (url.endsWith("/")) url else "$url/"
         }
         return when (provider) {
-            "OPENAI" -> "https://api.openai.com/v1/"
-            "ANTHROPIC" -> "https://api.anthropic.com/"
-            "CUSTOM" -> "https://api.openai.com/v1/"
+            "OPENAI" -> "https://api.your-provider.com/v1/"
+            "ANTHROPIC" -> "https://api.your-provider.com/v1/"
+            "CUSTOM" -> "https://api.your-provider.com/v1/"
             else -> "https://generativelanguage.googleapis.com/"
         }
     }
@@ -60,12 +60,7 @@ class GeminiRepository {
         val model = settings?.selectedModel?.trim()
         val provider = settings?.apiProvider ?: "GEMINI"
         if (!model.isNullOrEmpty()) return model
-        return when (provider) {
-            "OPENAI" -> "gpt-4o"
-            "ANTHROPIC" -> "claude-3-5-sonnet-20241022"
-            "CUSTOM" -> "gpt-4o"
-            else -> "gemini-2.5-flash"
-        }
+        return "my-custom-model"
     }
 
     /**
@@ -152,7 +147,7 @@ class GeminiRepository {
                 val firstCandidate = candidates.getJSONObject(0)
                 val finishReason = firstCandidate.optString("finishReason", "")
                 if (finishReason == "SAFETY" || finishReason == "RECITATION" || finishReason == "MAX_TOKENS" || finishReason == "LENGTH") {
-                    return Result.failure(Exception("Gemini 输出因限制产生截断 ($finishReason)"))
+                    return Result.failure(Exception("AI 输出因限制产生截断 ($finishReason)"))
                 }
                 val content = firstCandidate.optJSONObject("content")
                 val parts = content?.optJSONArray("parts")
@@ -161,7 +156,7 @@ class GeminiRepository {
                     return Result.success(text)
                 }
             }
-            return Result.failure(Exception("Gemini 未返回有效回答"))
+            return Result.failure(Exception("AI 未返回有效回答"))
         }
     }
 
@@ -218,7 +213,7 @@ class GeminiRepository {
                 val firstChoice = choices.getJSONObject(0)
                 val finishReason = firstChoice.optString("finish_reason", "")
                 if (finishReason == "length") {
-                    return Result.failure(Exception("OpenAI 输出因 length 产生截断"))
+                    return Result.failure(Exception("AI 输出因 length 产生截断"))
                 }
                 val message = firstChoice.optJSONObject("message")
                 val content = message?.optString("content", "") ?: ""
@@ -226,7 +221,7 @@ class GeminiRepository {
                     return Result.success(content)
                 }
             }
-            return Result.failure(Exception("OpenAI 兼容 API 未返回有效内容"))
+            return Result.failure(Exception("AI 未返回有效内容"))
         }
     }
 
@@ -274,7 +269,7 @@ class GeminiRepository {
             val resJson = JSONObject(responseStr)
             val stopReason = resJson.optString("stop_reason", "")
             if (stopReason == "max_tokens") {
-                return Result.failure(Exception("Anthropic 输出因 max_tokens 产生截断"))
+                return Result.failure(Exception("AI 输出因 max_tokens 产生截断"))
             }
             val contentArr = resJson.optJSONArray("content")
             if (contentArr != null && contentArr.length() > 0) {
@@ -284,7 +279,7 @@ class GeminiRepository {
                     return Result.success(text)
                 }
             }
-            return Result.failure(Exception("Anthropic API 未返回有效内容"))
+            return Result.failure(Exception("AI 未返回有效内容"))
         }
     }
 

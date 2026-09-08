@@ -44,7 +44,6 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
 
     val settings = settingsState!!
 
-    var selectedProvider by rememberSaveable { mutableStateOf(settings.apiProvider) }
     var apiKeyText by rememberSaveable { mutableStateOf(settings.apiKey) }
     var baseUrlText by rememberSaveable { mutableStateOf(settings.baseUrl) }
     var selectedModel by rememberSaveable { mutableStateOf(settings.selectedModel) }
@@ -161,73 +160,16 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                 }
 
                 Text(
-                    text = "支持 Google Gemini、OpenAI、Anthropic (Claude) 及自定义 OpenAI 兼容 API。选择服务商后可使用预设模型或手动指定。",
+                    text = "支持配置自定义 API 服务商。请填入对应的 API Key 和 Base URL。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-
-                // API Provider Selector
-                Text("选择 API 服务商：", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val providers = listOf(
-                        "GEMINI" to "Google Gemini",
-                        "OPENAI" to "OpenAI",
-                        "ANTHROPIC" to "Anthropic",
-                        "CUSTOM" to "自定义 API"
-                    )
-                    providers.forEach { (pKey, pLabel) ->
-                        FilterChip(
-                            selected = selectedProvider == pKey,
-                            onClick = {
-                                selectedProvider = pKey
-                                when (pKey) {
-                                    "GEMINI" -> {
-                                        baseUrlText = "https://generativelanguage.googleapis.com/"
-                                        if (selectedModel.isBlank() || selectedModel.contains("gpt") || selectedModel.contains("claude") || selectedModel == "gemini-3.5-flash") {
-                                            selectedModel = "gemini-2.5-flash"
-                                        }
-                                    }
-                                    "OPENAI" -> {
-                                        baseUrlText = "https://api.openai.com/v1/"
-                                        if (selectedModel.isBlank() || selectedModel.contains("gemini") || selectedModel.contains("claude")) {
-                                            selectedModel = "gpt-4o"
-                                        }
-                                    }
-                                    "ANTHROPIC" -> {
-                                        baseUrlText = "https://api.anthropic.com/"
-                                        if (selectedModel.isBlank() || selectedModel.contains("gemini") || selectedModel.contains("gpt")) {
-                                            selectedModel = "claude-3-5-sonnet-20241022"
-                                        }
-                                    }
-                                    "CUSTOM" -> {
-                                        if (baseUrlText.isBlank()) {
-                                            baseUrlText = "https://api.openai.com/v1/"
-                                        }
-                                    }
-                                }
-                            },
-                            label = { Text(pLabel) },
-                            modifier = Modifier.testTag("provider_chip_$pKey")
-                        )
-                    }
-                }
 
                 // API Key Input
                 OutlinedTextField(
                     value = apiKeyText,
                     onValueChange = { apiKeyText = it },
-                    label = {
-                        val keyLabel = when (selectedProvider) {
-                            "OPENAI" -> "OpenAI API Key (sk-...)"
-                            "ANTHROPIC" -> "Anthropic API Key (sk-ant-...)"
-                            "CUSTOM" -> "自定义 API Key"
-                            else -> "Gemini API Key (默认读取 Secrets)"
-                        }
-                        Text(keyLabel)
-                    },
+                    label = { Text("自定义 API Key") },
                     visualTransformation = if (hideKey) PasswordVisualTransformation() else VisualTransformation.None,
                     trailingIcon = {
                         TextButton(onClick = { hideKey = !hideKey }) {
@@ -236,29 +178,6 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     },
                     modifier = Modifier.fillMaxWidth().testTag("settings_api_key_input")
                 )
-
-                // Recommended Model Presets
-                val modelPresets = when (selectedProvider) {
-                    "OPENAI" -> listOf("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3-mini")
-                    "ANTHROPIC" -> listOf("claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229")
-                    "CUSTOM" -> listOf("deepseek-chat", "deepseek-r1", "qwen-max", "llama-3.3-70b")
-                    else -> listOf("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")
-                }
-
-                Text("快捷选择或手动输入模型：", style = MaterialTheme.typography.labelMedium)
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    modelPresets.forEach { model ->
-                        FilterChip(
-                            selected = selectedModel == model,
-                            onClick = { selectedModel = model },
-                            label = { Text(model) },
-                            modifier = Modifier.testTag("model_chip_$model")
-                        )
-                    }
-                }
 
                 // Model Name Input Field
                 OutlinedTextField(
@@ -283,7 +202,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                                 apiKey = apiKeyText,
                                 baseUrl = baseUrlText,
                                 selectedModel = selectedModel,
-                                apiProvider = selectedProvider
+                                apiProvider = "CUSTOM"
                             )
                         )
                     },
