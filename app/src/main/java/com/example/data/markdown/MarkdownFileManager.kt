@@ -177,16 +177,36 @@ class MarkdownFileManager(private val context: Context) {
     }
 
     /**
-     * Export all data to a zip file
+     * Export all data to a zip file with path traversal protection
      */
     fun exportAllDataToZip(outputStream: java.io.OutputStream) {
         java.util.zip.ZipOutputStream(outputStream).use { zos ->
             baseDir.walkTopDown().filter { it.isFile }.forEach { file ->
-                val zipEntry = java.util.zip.ZipEntry(file.relativeTo(baseDir).path)
-                zos.putNextEntry(zipEntry)
-                file.inputStream().use { it.copyTo(zos) }
-                zos.closeEntry()
+                val relativePath = file.relativeTo(baseDir).path.replace('\\', '/')
+                if (!relativePath.contains("..") && !relativePath.startsWith("/")) {
+                    val zipEntry = java.util.zip.ZipEntry(relativePath)
+                    zos.putNextEntry(zipEntry)
+                    file.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
             }
+        }
+    }
+
+    fun saveResumeStyle(style: String) {
+        try {
+            File(userDir, "resume_style.txt").writeText(style)
+        } catch (e: Exception) {
+            // Ignore write error
+        }
+    }
+
+    fun getSavedResumeStyle(): String {
+        return try {
+            val f = File(userDir, "resume_style.txt")
+            if (f.exists()) f.readText().trim().ifBlank { "Modern" } else "Modern"
+        } catch (e: Exception) {
+            "Modern"
         }
     }
 }

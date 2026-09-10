@@ -42,6 +42,7 @@ fun MarkdownText(
     val codeFg = MaterialTheme.colorScheme.primary
     val privacyBg = MaterialTheme.colorScheme.tertiaryContainer
     val privacyFg = MaterialTheme.colorScheme.onTertiaryContainer
+    val linkFg = MaterialTheme.colorScheme.primary
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -193,7 +194,8 @@ private fun parseInlineMarkdown(
     codeBg: Color,
     codeFg: Color,
     privacyBg: Color,
-    privacyFg: Color
+    privacyFg: Color,
+    linkFg: Color = Color(0xFF1E88E5)
 ): AnnotatedString {
     return buildAnnotatedString {
         var i = 0
@@ -201,47 +203,55 @@ private fun parseInlineMarkdown(
 
         while (i < len) {
             when {
-                // Standard Markdown Link [title](url)
-                text.startsWith("[", i) && text.indexOf("]", i) > i && 
-                text.indexOf("]", i) + 1 < len && text[text.indexOf("]", i) + 1] == '(' -> {
-                    val endBracket = text.indexOf("]", i)
-                    val endParen = text.indexOf(")", endBracket + 2)
-                    if (endParen != -1) {
-                        val title = text.substring(i + 1, endBracket)
-                        withStyle(
-                            SpanStyle(
-                                color = Color(0xFF1E88E5),
-                                textDecoration = TextDecoration.Underline
-                            )
-                        ) {
-                            append(title)
+                // Link or Privacy Placeholder [content]
+                text.startsWith("[", i) -> {
+                    val searchLimit = (i + 120).coerceAtMost(len)
+                    val endBracket = text.indexOf(']', i)
+                    if (endBracket != -1 && endBracket < searchLimit) {
+                        // Standard Markdown Link [title](url)
+                        if (endBracket + 1 < len && text[endBracket + 1] == '(') {
+                            val parenLimit = (endBracket + 200).coerceAtMost(len)
+                            val endParen = text.indexOf(')', endBracket + 2)
+                            if (endParen != -1 && endParen < parenLimit) {
+                                val title = text.substring(i + 1, endBracket)
+                                withStyle(
+                                    SpanStyle(
+                                        color = linkFg,
+                                        textDecoration = TextDecoration.Underline
+                                    )
+                                ) {
+                                    append(title)
+                                }
+                                i = endParen + 1
+                                continue
+                            }
                         }
-                        i = endParen + 1
+
+                        // Privacy Placeholder Highlight like [姓名], [电话], [电子邮箱]
+                        val contentInside = text.substring(i + 1, endBracket)
+                        val isPrivacyPlaceholder = contentInside.length <= 25 && (
+                            contentInside in com.example.data.ai.AISafetyManager.PRIVACY_PLACEHOLDERS ||
+                            contentInside.endsWith("隐私") || contentInside.endsWith("占位")
+                        )
+
+                        if (isPrivacyPlaceholder) {
+                            withStyle(
+                                SpanStyle(
+                                    fontWeight = FontWeight.Bold,
+                                    color = privacyFg,
+                                    background = privacyBg
+                                )
+                            ) {
+                                append(" [$contentInside] ")
+                            }
+                        } else {
+                            append("[$contentInside]")
+                        }
+                        i = endBracket + 1
                     } else {
                         append(text[i])
                         i++
                     }
-                }
-                // Privacy Placeholder Highlight like [姓名], [电话], [电子邮箱]
-                text.startsWith("[", i) && text.indexOf("]", i) > i -> {
-                    val endBracket = text.indexOf("]", i)
-                    val contentInside = text.substring(i + 1, endBracket)
-                    val isPrivacyPlaceholder = contentInside in com.example.data.ai.AISafetyManager.PRIVACY_PLACEHOLDERS || contentInside.contains("隐私") || contentInside.contains("占位")
-
-                    if (isPrivacyPlaceholder) {
-                        withStyle(
-                            SpanStyle(
-                                fontWeight = FontWeight.Bold,
-                                color = privacyFg,
-                                background = privacyBg
-                            )
-                        ) {
-                            append(" [$contentInside] ")
-                        }
-                    } else {
-                        append("[$contentInside]")
-                    }
-                    i = endBracket + 1
                 }
                 // Bold text **text**
                 text.startsWith("**", i) -> {

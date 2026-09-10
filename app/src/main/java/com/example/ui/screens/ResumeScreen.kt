@@ -161,11 +161,21 @@ fun ResumeScreen(
 
         if (isGenerating) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text(
-                text = aiStatusMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = aiStatusMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { viewModel.cancelActiveAiJob() }) {
+                    Text("取消", color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
 
         // Resume Preview Card

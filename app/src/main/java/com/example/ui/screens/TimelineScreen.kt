@@ -282,7 +282,7 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "📅 ${result.date}",
+                                            text = result.date,
                                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
@@ -305,7 +305,7 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
 
                                     if (result.matchReason.isNotBlank()) {
                                         Text(
-                                            text = "💡 匹配理由: ${result.matchReason}",
+                                            text = "匹配理由: ${result.matchReason}",
                                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                                             color = MaterialTheme.colorScheme.primary
                                         )

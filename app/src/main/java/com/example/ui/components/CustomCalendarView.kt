@@ -28,22 +28,34 @@ fun CustomCalendarView(
     onDateSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val calendar = remember { Calendar.getInstance() }
-    
-    // Initialize calendar to selectedDate
+    var currentMonthCalendar by remember {
+        mutableStateOf(Calendar.getInstance().apply {
+            try {
+                val d = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).parse(selectedDate)
+                if (d != null) time = d
+            } catch (e: Exception) { }
+        })
+    }
+
+    // Synchronize calendar view month when selectedDate changes (P2-4)
     LaunchedEffect(selectedDate) {
         try {
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
             val d = sdf.parse(selectedDate)
             if (d != null) {
-                calendar.time = d
+                val targetCal = Calendar.getInstance().apply { time = d }
+                if (targetCal.get(Calendar.YEAR) != currentMonthCalendar.get(Calendar.YEAR) ||
+                    targetCal.get(Calendar.MONTH) != currentMonthCalendar.get(Calendar.MONTH)
+                ) {
+                    currentMonthCalendar = (targetCal.clone() as Calendar).apply {
+                        set(Calendar.DAY_OF_MONTH, 1)
+                    }
+                }
             }
         } catch (e: Exception) {
             // Default to today
         }
     }
-
-    var currentMonthCalendar by remember { mutableStateOf(calendar.clone() as Calendar) }
 
     val monthFormat = remember { SimpleDateFormat("yyyy年 MM月", Locale.CHINA) }
     val dayFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.ROOT) }

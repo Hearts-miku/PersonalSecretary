@@ -1,13 +1,15 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Palette
@@ -15,13 +17,13 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -34,6 +36,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
     val settingsState by viewModel.settings.collectAsState()
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
     val aiStatusMessage by viewModel.aiStatusMessage.collectAsState()
+    val context = LocalContext.current
 
     if (settingsState == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -44,7 +47,8 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
 
     val settings = settingsState!!
 
-    var apiKeyText by rememberSaveable { mutableStateOf(settings.apiKey) }
+    // 使用 remember 存储敏感 API Key，避免保存到进程状态 Bundle (P1-4)
+    var apiKeyText by remember { mutableStateOf(settings.apiKey) }
     var baseUrlText by rememberSaveable { mutableStateOf(settings.baseUrl) }
     var selectedModel by rememberSaveable { mutableStateOf(settings.selectedModel) }
     var hideKey by remember { mutableStateOf(true) }
@@ -53,6 +57,23 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
 
     LaunchedEffect(Unit) {
         viewModel.loadMdInfo()
+    }
+
+    val exportZipLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val outputStream = context.contentResolver.openOutputStream(uri)
+                if (outputStream != null) {
+                    viewModel.exportAllDataToZip(outputStream)
+                } else {
+                    viewModel.showSnack("无法打开目标文件流")
+                }
+            } catch (e: Exception) {
+                viewModel.showSnack("导出异常: ${e.message}")
+            }
+        }
     }
 
     val scrollState = rememberScrollState()
@@ -65,7 +86,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
             .verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Header
+        // 标题栏
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.Default.Settings,
@@ -80,7 +101,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
             )
         }
 
-        // Section 0: UI Theme Selection
+        // 卡片 1: 界面主题配置
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -134,12 +155,12 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
             }
         }
 
-        // Section 1: AI Model & API Settings
+        // 卡片 2: 自定义 API 配置 (只保留自定义 API)
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            elevation = CardDefaults.cardElevation(2.dp)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -153,23 +174,24 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "模型 API 相关配置",
+                        text = "自定义 API 服务配置",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
 
                 Text(
-                    text = "支持配置自定义 API 服务商。请填入对应的 API Key 和 Base URL。",
+                    text = "本应用采用标准兼容协议与您指定的自定义模型服务进行通信。请配置您的 API Key 与服务端点 Base URL。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                // API Key Input
+                // API Key 输入框
                 OutlinedTextField(
                     value = apiKeyText,
                     onValueChange = { apiKeyText = it },
                     label = { Text("自定义 API Key") },
+                    placeholder = { Text("请输入您的 API Key") },
                     visualTransformation = if (hideKey) PasswordVisualTransformation() else VisualTransformation.None,
                     trailingIcon = {
                         TextButton(onClick = { hideKey = !hideKey }) {
@@ -179,30 +201,49 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     modifier = Modifier.fillMaxWidth().testTag("settings_api_key_input")
                 )
 
-                // Model Name Input Field
+                // 模型标识名称
                 OutlinedTextField(
                     value = selectedModel,
                     onValueChange = { selectedModel = it },
-                    label = { Text("AI 模型标识名称 (Model Name)") },
+                    label = { Text("AI 模型名称 (Model Name)") },
+                    placeholder = { Text("例如：gpt-4o、qwen-plus 等") },
                     modifier = Modifier.fillMaxWidth().testTag("settings_model_input")
                 )
 
-                // Base URL Input
+                // Base URL 输入框 (P1-17)
                 OutlinedTextField(
                     value = baseUrlText,
                     onValueChange = { baseUrlText = it },
-                    label = { Text("API 请求 Base URL") },
+                    label = { Text("API 服务 Base URL") },
+                    placeholder = { Text("https://api.your-provider.com/v1/") },
                     modifier = Modifier.fillMaxWidth().testTag("settings_base_url_input")
                 )
 
+                // 隐私与数据安全说明 (P2-20)
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = "数据安全说明：您配置的 API Key 和日志内容将直接发往您指定的上述 Base URL 服务端点，不会经过任何第三方中间服务器。请确保端点来自您信任的服务提供方。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+
                 Button(
                     onClick = {
+                        val trimmedUrl = baseUrlText.trim()
+                        if (trimmedUrl.isNotBlank() && !trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+                            viewModel.showSnack("Base URL 必须以 http:// 或 https:// 开头")
+                            return@Button
+                        }
                         viewModel.updateSettings(
                             settings.copy(
-                                apiKey = apiKeyText,
-                                baseUrl = baseUrlText,
-                                selectedModel = selectedModel,
-                                apiProvider = "CUSTOM"
+                                apiKey = apiKeyText.trim(),
+                                baseUrl = trimmedUrl,
+                                selectedModel = selectedModel.trim()
                             )
                         )
                     },
@@ -213,7 +254,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
             }
         }
 
-        // Section 2: Scheduled Daily Task Settings
+        // 卡片 3: 定时任务管理
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -250,7 +291,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     )
                 }
                 Text(
-                    text = "即将支持：系统级定时任务（如利用 WorkManager 在每天 20:00 自动整理日志）将在后续版本接入，敬请期待。",
+                    text = "系统级定时任务（如利用系统后台调度在每日固定时间自动整理工作日志）可在后续版本灵活接入。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -267,16 +308,26 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                 }
 
                 if (isProcessingAI) {
-                    Text(
-                        text = aiStatusMessage,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = aiStatusMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { viewModel.cancelActiveAiJob() }) {
+                            Text("取消", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
             }
         }
 
-        // Section 3: Markdown Document System Storage Inspector
+        // 卡片 4: 后台 Markdown 存储状态
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -295,7 +346,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "后台 Markdown 文档系统状态",
+                        text = "本地 Markdown 文档状态",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -318,7 +369,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
             }
         }
 
-        // Section 4: AI Safety & Guardrails Card
+        // 卡片 5: 安全与规范防线
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -336,31 +387,56 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "AI 侧安全防线与严格约束",
+                        text = "AI 安全规范与提示词防护",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
                 Text(
-                    text = "• 严防提示词注入：输入文本隔离在 XML 专属数据标签内，自动过滤越权指令。\n• 严防幻觉：强制AI只根据真实日志提炼，严禁臆造工作内容与编造简历经历。\n• 隐私脱敏：生成简历强制使用 [姓名]、[电话]、[邮箱] 等标准占位符。",
+                    text = "• 严防提示词注入：所有用户输入文本均使用专属 XML 标签进行严格沙箱隔离。\n• 严防事实幻觉：强制仅根据用户真实工作记录提炼，严禁捏造虚假经历。\n• 隐私脱敏保障：简历与履历生成强制采用标准通用占位符脱敏。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // Section 5: Data Management
+        // 卡片 6: 数据管理 (导出 ZIP & 清空数据)
         var showClearDataDialog by remember { mutableStateOf(false) }
 
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f))
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Text(
+                    text = "数据备份与导出",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                )
+                Text(
+                    text = "将所有工作日志、履历档案和生成的 Markdown 文件打包为 ZIP 归档，方便离线备份与迁移。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                OutlinedButton(
+                    onClick = {
+                        val fileName = "PersonalSecretary_Backup_${viewModel.repository.getTodayString()}.zip"
+                        exportZipLauncher.launch(fileName)
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("export_data_zip_btn")
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("导出全部数据备份 (ZIP)")
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.DeleteForever,
@@ -369,13 +445,13 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "危险操作",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        text = "数据清理与重置",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.error
                     )
                 }
                 Text(
-                    text = "一键清除所有工作日志、履历档案和本地记录。该操作不可逆，请谨慎操作。",
+                    text = "清空所有工作日志、履历档案和本地文档。该操作不可逆，请谨慎操作。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )

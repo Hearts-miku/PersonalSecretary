@@ -1,7 +1,7 @@
 package com.example.data.repository
 
 import android.content.Context
-import com.example.data.ai.GeminiRepository
+import com.example.data.ai.AiRepository
 import com.example.data.local.*
 import com.example.data.markdown.MarkdownFileManager
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +23,7 @@ class WorkLogRepository(private val context: Context) {
     private val versionDao = db.experienceVersionDao()
 
     val markdownManager = MarkdownFileManager(context)
-    val aiRepository = GeminiRepository()
+    val aiRepository = AiRepository()
 
     // Flows for UI
     val allLogsFlow: Flow<List<DailyWorkLogEntity>> = logDao.getAllLogs()
@@ -149,7 +149,7 @@ class WorkLogRepository(private val context: Context) {
 
             // 1. AI Summarize Daily Work
             onProgress("AI 正在提炼【$targetDate】工作日志与总结...")
-            val summaryRes = aiRepository.summarizeDailyWork(targetDate, rawContent, settings)
+            val summaryRes = aiRepository.summarizeDailyNotes(targetDate, rawContent, settings)
             if (summaryRes.isFailure) {
                 return@withContext Result.failure(summaryRes.exceptionOrNull() ?: Exception("AI 总结失败"))
             }
@@ -196,14 +196,12 @@ class WorkLogRepository(private val context: Context) {
             // 3. AI Evaluate Career Profile Update
             onProgress("AI 正在评估是否需要更新【用户职业履历】...")
             val currentProfileText = markdownManager.getCareerProfileContent()
-            val evalRes = aiRepository.evaluateAndUpdateCareerProfile(currentProfileText, summaryMarkdown, settings)
+            val evalRes = aiRepository.evaluateCareerProfileUpdate(currentProfileText, summaryMarkdown, settings)
             if (evalRes.isSuccess) {
                 val evalObj = evalRes.getOrNull()
                 if (evalObj != null && evalObj.shouldUpdate && evalObj.updatedProfileMarkdown.isNotBlank()) {
                     onProgress("检测到新的关键技能/产出，正在更新职业履历文档...")
                     val currentProfile = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = evalObj.updatedProfileMarkdown)
-                    
-                    markdownManager.writeCareerProfile(evalObj.updatedProfileMarkdown)
                     
                     // Save version backup
                     versionDao.insertVersion(
@@ -250,18 +248,27 @@ class WorkLogRepository(private val context: Context) {
     private suspend fun getRecentLogsContext(): String {
         val maxChars = 25000
         var currentChars = 0
-        return logDao.getAllLogsOnce()
-            .filter { it.summaryMarkdown.isNotBlank() }
-            .takeWhile { log ->
-                val length = log.summaryMarkdown.length + log.date.length + 6
-                if (currentChars + length > maxChars) {
-                    false
-                } else {
-                    currentChars += length
-                    true
-                }
+        val sb = StringBuilder()
+        val allLogs = logDao.getAllLogsOnce().filter { it.summaryMarkdown.isNotBlank() }
+        for (log in allLogs) {
+            val content = if (log.summaryMarkdown.length > 5000) {
+                log.summaryMarkdown.take(5000) + "\n...[单条日志截断]"
+            } else {
+                log.summaryMarkdown
             }
-            .joinToString("\n\n") { "### ${it.date}\n${it.summaryMarkdown}" }
+            val entry = "### ${log.date}\n$content"
+            if (currentChars + entry.length > maxChars) {
+                val remainingChars = maxChars - currentChars
+                if (remainingChars > 100) {
+                    sb.append("### ${log.date}\n").append(content.take(remainingChars - 50)).append("\n...[达到上下文上限]")
+                }
+                break
+            }
+            if (sb.isNotEmpty()) sb.append("\n\n")
+            sb.append(entry)
+            currentChars += entry.length
+        }
+        return sb.toString()
     }
 
     suspend fun generateWorkExperiences(): Result<String> = withContext(Dispatchers.IO) {
@@ -469,7 +476,7 @@ class WorkLogRepository(private val context: Context) {
 
     // --- Semantic Search ---
 
-    suspend fun performSemanticSearch(query: String, onAiFailure: ((String) -> Unit)? = null): Result<List<com.example.data.ai.GeminiRepository.SemanticSearchResult>> = withContext(Dispatchers.IO) {
+    suspend fun performSemanticSearch(query: String, onAiFailure: ((String) -> Unit)? = null): Result<List<AiRepository.SemanticSearchResult>> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext Result.success(emptyList())
 
         val logs = logDao.getAllLogsOnce()
@@ -497,7 +504,7 @@ class WorkLogRepository(private val context: Context) {
             val end = (idx + lowerQuery.length + 50).coerceAtMost(text.length)
             val snippetText = if (idx != -1) text.substring(start, end) else text.take(80)
 
-            com.example.data.ai.GeminiRepository.SemanticSearchResult(
+            AiRepository.SemanticSearchResult(
                 date = log.date,
                 relevanceScore = 80,
                 matchReason = "文本包含关键词 \"$query\"",
@@ -510,6 +517,14 @@ class WorkLogRepository(private val context: Context) {
         }
 
         return@withContext Result.success(aiResult.getOrDefault(emptyList()))
+    }
+
+    fun saveResumeStyle(style: String) {
+        markdownManager.saveResumeStyle(style)
+    }
+
+    fun getSavedResumeStyle(): String {
+        return markdownManager.getSavedResumeStyle()
     }
 
     suspend fun exportDataToZip(outputStream: java.io.OutputStream) = withContext(Dispatchers.IO) {

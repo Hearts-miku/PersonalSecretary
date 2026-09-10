@@ -37,10 +37,9 @@ data class UserCareerProfileEntity(
 data class UserSettingsEntity(
     @PrimaryKey val id: Int = 1,
     val apiKey: String = "",
-    val baseUrl: String = "https://api.your-provider.com/v1/",
-    val selectedModel: String = "my-custom-model",
-    val themeMode: String = "SYSTEM", // "SYSTEM", "LIGHT", "DARK"
-    val apiProvider: String = "CUSTOM" // "GEMINI", "OPENAI", "ANTHROPIC", "CUSTOM"
+    val baseUrl: String = "",
+    val selectedModel: String = "",
+    val themeMode: String = "SYSTEM" // "SYSTEM", "LIGHT", "DARK"
 )
 
 @Entity(tableName = "experience_versions")

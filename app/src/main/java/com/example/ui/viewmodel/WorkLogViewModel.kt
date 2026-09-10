@@ -3,6 +3,7 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.ai.AiRepository
 import com.example.data.local.DailyWorkLogEntity
 import com.example.data.local.TodoItemEntity
 import com.example.data.local.UserCareerProfileEntity
@@ -54,8 +55,26 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     private val _isSearchingLogs = MutableStateFlow(false)
     val isSearchingLogs: StateFlow<Boolean> = _isSearchingLogs.asStateFlow()
 
-    private val _searchResults = MutableStateFlow<List<com.example.data.ai.GeminiRepository.SemanticSearchResult>?>(null)
-    val searchResults: StateFlow<List<com.example.data.ai.GeminiRepository.SemanticSearchResult>?> = _searchResults.asStateFlow()
+    private val _searchResults = MutableStateFlow<List<AiRepository.SemanticSearchResult>?>(null)
+    val searchResults: StateFlow<List<AiRepository.SemanticSearchResult>?> = _searchResults.asStateFlow()
+
+    private var activeAiJob: kotlinx.coroutines.Job? = null
+
+    private val _lastDeletedTodo = MutableStateFlow<TodoItemEntity?>(null)
+    val lastDeletedTodo: StateFlow<TodoItemEntity?> = _lastDeletedTodo.asStateFlow()
+
+    fun cancelActiveAiJob() {
+        activeAiJob?.cancel()
+        activeAiJob = null
+        _isProcessingAI.value = false
+        _isGeneratingResume.value = false
+        _isGeneratingWorkExp.value = false
+        _isGeneratingProjectExp.value = false
+        _isImportingFile.value = false
+        _isSearchingLogs.value = false
+        _aiStatusMessage.value = ""
+        showSnack("已取消当前 AI 任务")
+    }
 
     // AI Processing States
     private val _isProcessingAI = MutableStateFlow(false)
@@ -129,7 +148,8 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     fun triggerAISummarizeSelectedDate() {
         val date = _selectedDate.value
-        viewModelScope.launch {
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
             _isProcessingAI.value = true
             _aiStatusMessage.value = "正在对【$date】进行 AI 结构化整理..."
             
@@ -144,6 +164,13 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 showSnack("AI 处理失败: ${result.exceptionOrNull()?.message}")
             }
         }
+    }
+
+    fun triggerAISummarizeForUnsummarizedOrSelected() {
+        val unsummarized = allLogs.value.firstOrNull { !it.isSummarized && it.rawNotes.isNotBlank() }
+        val targetDate = unsummarized?.date ?: _selectedDate.value
+        selectDate(targetDate)
+        triggerAISummarizeSelectedDate()
     }
 
     fun triggerManualScheduledTask() {
@@ -172,16 +199,22 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
             if (savedResume.isNotBlank()) {
                 _resumeMarkdown.value = savedResume
             }
+            val savedStyle = repository.getSavedResumeStyle()
+            if (savedStyle.isNotBlank()) {
+                _selectedResumeStyle.value = savedStyle
+            }
         }
     }
 
     fun setSelectedResumeStyle(style: String) {
         _selectedResumeStyle.value = style
+        repository.saveResumeStyle(style)
     }
 
     fun generateResume(style: String = _selectedResumeStyle.value) {
-        _selectedResumeStyle.value = style
-        viewModelScope.launch {
+        setSelectedResumeStyle(style)
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
             _isGeneratingResume.value = true
             _aiStatusMessage.value = "正在使用 AI 生成《$style》风格敏感词保护简历..."
 
@@ -200,7 +233,8 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun generateWorkExperiences() {
-        viewModelScope.launch {
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
             _isGeneratingWorkExp.value = true
             _aiStatusMessage.value = "AI 正在全量整理并提炼【工作经历】..."
 
@@ -216,15 +250,16 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun generateProjectExperiences() {
-        viewModelScope.launch {
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
             _isGeneratingProjectExp.value = true
-            _aiStatusMessage.value = "AI 正在提取并总结【项目经历】..."
+            _aiStatusMessage.value = "AI 正在全量提取核心【项目经历】..."
 
             val res = repository.generateProjectExperiences()
             _isGeneratingProjectExp.value = false
 
             if (res.isSuccess) {
-                showSnack("项目经历提取成功！")
+                showSnack("项目经历提炼成功！")
             } else {
                 showSnack("项目经历生成失败: ${res.exceptionOrNull()?.message}")
             }
@@ -253,7 +288,21 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteTodo(id: Int) {
         viewModelScope.launch {
-            repository.deleteTodo(id)
+            val todo = allTodos.value.find { it.id == id }
+            if (todo != null) {
+                repository.deleteTodo(id)
+                _lastDeletedTodo.value = todo
+                showSnack("已删除待办: ${todo.title}")
+            }
+        }
+    }
+
+    fun undoDeleteTodo() {
+        val todo = _lastDeletedTodo.value ?: return
+        viewModelScope.launch {
+            repository.addTodo(todo)
+            _lastDeletedTodo.value = null
+            showSnack("已恢复待办: ${todo.title}")
         }
     }
 
@@ -471,6 +520,7 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 _editingProfileText.value = null
                 _editingWorkExpText.value = null
                 _editingProjectExpText.value = null
+                loadMdInfo()
                 showSnack("所有记录的数据已清空")
             } catch (e: Exception) {
                 showSnack("清空失败: ${e.message}")

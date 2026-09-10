@@ -25,6 +25,7 @@ import com.example.ui.viewmodel.WorkLogViewModel
 @Composable
 fun TodoListScreen(viewModel: WorkLogViewModel) {
     val allTodos by viewModel.allTodos.collectAsState()
+    val lastDeletedTodo by viewModel.lastDeletedTodo.collectAsState()
 
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, PENDING, COMPLETED, HIGH
     var showAddDialog by remember { mutableStateOf(false) }
@@ -156,6 +157,29 @@ fun TodoListScreen(viewModel: WorkLogViewModel) {
                     }
                 }
             }
+
+            if (lastDeletedTodo != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "已删除待办: ${lastDeletedTodo?.title?.take(15)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.inverseOnSurface
+                        )
+                        TextButton(onClick = { viewModel.undoDeleteTodo() }) {
+                            Text("撤销", color = MaterialTheme.colorScheme.inversePrimary)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -256,9 +280,9 @@ private fun TodoCardItem(
 @Composable
 private fun PriorityBadge(priority: String) {
     val (bg, fg, label) = when (priority) {
-        "HIGH" -> Triple(Color(0xFFFEE2E2), Color(0xFFDC2626), "高优")
-        "LOW" -> Triple(Color(0xFFF3F4F6), Color(0xFF4B5563), "低优")
-        else -> Triple(Color(0xFFFEF3C7), Color(0xFFD97706), "中优")
+        "HIGH" -> Triple(MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer, "高优")
+        "LOW" -> Triple(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant, "低优")
+        else -> Triple(MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer, "中优")
     }
 
     Surface(
