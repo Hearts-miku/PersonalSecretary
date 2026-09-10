@@ -152,12 +152,6 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         triggerAISummarizeSelectedDate()
     }
 
-    fun triggerAISummarizeToday() {
-        val today = repository.getTodayString()
-        selectDate(today)
-        triggerAISummarizeSelectedDate()
-    }
-
     fun triggerAISummarizeSelectedDate() {
         val date = _selectedDate.value
         activeAiJob?.cancel()
