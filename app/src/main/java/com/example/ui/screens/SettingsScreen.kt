@@ -418,7 +418,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
                 Text(
-                    text = "将所有工作日志、履历档案和生成的 Markdown 文件打包为 ZIP 归档，方便离线备份与迁移。",
+                    text = "将所有工作日志、履历档案和生成的 Markdown 文件打包为 ZIP 归档，方便离线备份与迁移。\n隐私提示：导出的备份文件包含您的原始工作记录与文档明文，请妥善保管该文件，切勿发送给不可信的第三方。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

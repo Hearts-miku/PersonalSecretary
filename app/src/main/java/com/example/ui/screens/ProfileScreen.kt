@@ -13,10 +13,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
@@ -89,15 +88,30 @@ fun ProfileScreen(
         uri?.let {
             try {
                 var fileName = "imported_file.txt"
+                var fileSize: Long? = null
                 if (uri.scheme == "content") {
                     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         if (cursor.moveToFirst()) {
                             val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                             if (nameIdx != -1) fileName = cursor.getString(nameIdx)
+                            val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                            if (sizeIdx != -1 && !cursor.isNull(sizeIdx)) {
+                                fileSize = cursor.getLong(sizeIdx)
+                            }
                         }
                     }
                 }
+                if (fileSize != null && fileSize!! > 1024 * 1024) {
+                    viewModel.showSnack("文件体积过大（超过 1MB），请上传较小的纯文本/Markdown 文件")
+                    return@let
+                }
+
                 val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (text.length > 100_000) {
+                    viewModel.showSnack("文件内容过长（超过 10 万字），请适当精简后导入")
+                    return@let
+                }
+
                 if (text.isNotBlank()) {
                     pendingImportContent = text
                     pendingImportFileName = fileName
@@ -336,7 +350,7 @@ fun ProfileScreen(
                                         modifier = Modifier.testTag("work_exp_diff_btn")
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.CompareArrows,
+                                            imageVector = Icons.AutoMirrored.Filled.CompareArrows,
                                             contentDescription = "差异对比",
                                             modifier = Modifier.size(16.dp)
                                         )
@@ -406,7 +420,7 @@ fun ProfileScreen(
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
-                                        text = "尚未生成工作经历总结，请使用右上角功能或直接导入",
+                                        text = "尚未生成工作经历总结，请点击右上角「AI 提炼工作经历」或直接导入外部文档",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -486,7 +500,7 @@ fun ProfileScreen(
                                         modifier = Modifier.testTag("project_exp_diff_btn")
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.CompareArrows,
+                                            imageVector = Icons.AutoMirrored.Filled.CompareArrows,
                                             contentDescription = "差异对比",
                                             modifier = Modifier.size(16.dp)
                                         )
@@ -555,7 +569,7 @@ fun ProfileScreen(
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
-                                        text = "尚未提取项目经历总结，请使用右上角功能或直接导入",
+                                        text = "尚未提取项目经历总结，请点击右上角「AI 提取项目经历」或直接导入外部文档",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -705,56 +719,68 @@ fun ProfileScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "2. 请选择导入方式：\n• 直接导入：保留原始文本，不做任何修改。\n• 导入并提炼：使用 AI 自动格式化、提炼内容并优化排版结构。",
+                        text = "2. 请选择导入方式：",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                when (selectedTarget) {
+                                    0 -> viewModel.importWorkExperiences(content, fileName, false)
+                                    1 -> viewModel.importProjectExperiences(content, fileName, false)
+                                    2 -> viewModel.importCareerProfile(content, fileName, false)
+                                }
+                                showImportTypeDialog = false
+                                pendingImportContent = null
+                                activeTab = selectedTarget
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("直接导入")
+                        }
+
+                        Button(
+                            onClick = {
+                                when (selectedTarget) {
+                                    0 -> viewModel.importWorkExperiences(content, fileName, true)
+                                    1 -> viewModel.importProjectExperiences(content, fileName, true)
+                                    2 -> viewModel.importCareerProfile(content, fileName, true)
+                                }
+                                showImportTypeDialog = false
+                                pendingImportContent = null
+                                activeTab = selectedTarget
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("导入并提炼")
+                        }
+                    }
+
+                    Text(
+                        text = "• 直接导入：保留原始文本，不做任何修改。\n• 导入并提炼：使用 AI 自动格式化、提炼内容并优化排版结构。",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        when (selectedTarget) {
-                            0 -> viewModel.importWorkExperiences(content, fileName, true)
-                            1 -> viewModel.importProjectExperiences(content, fileName, true)
-                            2 -> viewModel.importCareerProfile(content, fileName, true)
-                        }
-                        showImportTypeDialog = false
-                        pendingImportContent = null
-                        activeTab = selectedTarget
-                    }
-                ) {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("导入并提炼")
-                }
-            },
+            confirmButton = {},
             dismissButton = {
-                OutlinedButton(
-                    onClick = {
-                        when (selectedTarget) {
-                            0 -> viewModel.importWorkExperiences(content, fileName, false)
-                            1 -> viewModel.importProjectExperiences(content, fileName, false)
-                            2 -> viewModel.importCareerProfile(content, fileName, false)
-                        }
-                        showImportTypeDialog = false
-                        pendingImportContent = null
-                        activeTab = selectedTarget
-                    }
-                ) {
-                    Text("直接导入")
-                }
-                
                 TextButton(
                     onClick = {
                         showImportTypeDialog = false
                         pendingImportContent = null
-                    },
-                    modifier = Modifier.padding(end = 8.dp)
+                    }
                 ) {
-                    Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("取消")
                 }
             }
         )
@@ -936,7 +962,7 @@ fun VersionHistoryDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     TextButton(onClick = { onCompareWithCurrent(ver) }) {
-                                        Icon(Icons.Default.CompareArrows, contentDescription = "对比", modifier = Modifier.size(16.dp))
+                                        Icon(Icons.AutoMirrored.Filled.CompareArrows, contentDescription = "对比", modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("查看差异", style = MaterialTheme.typography.labelMedium)
                                     }
@@ -993,6 +1019,11 @@ fun DiffComparisonDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
+            val addedColor = MaterialTheme.colorScheme.primary
+            val addedBg = MaterialTheme.colorScheme.primaryContainer
+            val removedColor = MaterialTheme.colorScheme.error
+            val removedBg = MaterialTheme.colorScheme.errorContainer
+
             Column {
                 Text(
                     text = title,
@@ -1004,24 +1035,24 @@ fun DiffComparisonDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
-                        color = Color(0xFFE8F5E9),
+                        color = addedBg,
                         shape = RoundedCornerShape(6.dp)
                     ) {
                         Text(
                             text = "+$addedCount 行新增",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = Color(0xFF2E7D32),
+                            color = addedColor,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
                     Surface(
-                        color = Color(0xFFFFEBEE),
+                        color = removedBg,
                         shape = RoundedCornerShape(6.dp)
                     ) {
                         Text(
                             text = "-$removedCount 行删除",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = Color(0xFFC62828),
+                            color = removedColor,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
@@ -1034,6 +1065,11 @@ fun DiffComparisonDialog(
             }
         },
         text = {
+            val addedColor = MaterialTheme.colorScheme.primary
+            val addedBg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+            val removedColor = MaterialTheme.colorScheme.error
+            val removedBg = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1052,8 +1088,8 @@ fun DiffComparisonDialog(
                 ) {
                     diffLines.forEach { line ->
                         val (bgColor, textColor, iconSymbol) = when (line.type) {
-                            DiffType.ADDED -> Triple(Color(0xFFE8F5E9), Color(0xFF2E7D32), "+")
-                            DiffType.REMOVED -> Triple(Color(0xFFFFEBEE), Color(0xFFC62828), "-")
+                            DiffType.ADDED -> Triple(addedBg, addedColor, "+")
+                            DiffType.REMOVED -> Triple(removedBg, removedColor, "-")
                             DiffType.UNCHANGED -> Triple(Color.Transparent, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), " ")
                         }
 

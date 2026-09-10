@@ -28,8 +28,7 @@ class AiRepository {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     private fun getEffectiveApiKey(settings: UserSettingsEntity?): String {
-        val rawKey = settings?.apiKey?.trim().orEmpty()
-        return CryptoManager.decode(rawKey).trim()
+        return settings?.apiKey?.trim().orEmpty()
     }
 
     private fun getEffectiveBaseUrl(settings: UserSettingsEntity?): String {

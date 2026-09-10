@@ -24,6 +24,38 @@ object CryptoManager {
     private const val PREFIX_V2 = "v2:"
     private const val PREFIX_V1 = "v1:"
 
+    private fun base64Encode(bytes: ByteArray): String {
+        return try {
+            java.util.Base64.getEncoder().encodeToString(bytes)
+        } catch (e: Throwable) {
+            Base64.encodeToString(bytes, Base64.NO_WRAP)
+        }
+    }
+
+    private fun base64Decode(str: String): ByteArray {
+        return try {
+            java.util.Base64.getDecoder().decode(str)
+        } catch (e: Throwable) {
+            Base64.decode(str, Base64.NO_WRAP)
+        }
+    }
+
+    private fun logWarn(tag: String, msg: String) {
+        try {
+            android.util.Log.w(tag, msg)
+        } catch (e: Throwable) {
+            // JVM environment without Android Log
+        }
+    }
+
+    private fun logError(tag: String, msg: String) {
+        try {
+            android.util.Log.e(tag, msg)
+        } catch (e: Throwable) {
+            // JVM environment without Android Log
+        }
+    }
+
     @Synchronized
     private fun getOrCreateSecretKey(): SecretKey? {
         return try {
@@ -61,14 +93,16 @@ object CryptoManager {
                 val combined = ByteArray(iv.size + encryptedBytes.size)
                 System.arraycopy(iv, 0, combined, 0, iv.size)
                 System.arraycopy(encryptedBytes, 0, combined, iv.size, encryptedBytes.size)
-                return "$PREFIX_V2${Base64.encodeToString(combined, Base64.NO_WRAP)}"
+                return "$PREFIX_V2${base64Encode(combined)}"
             } catch (e: Exception) {
-                // 加密异常时退回 v1 格式保障可用性
+                logWarn("CryptoManager", "Keystore AES-GCM 加密失败，降级至 v1: ${e.message}")
             }
+        } else {
+            logWarn("CryptoManager", "未获取到 Keystore 密钥，降级至 v1")
         }
 
         // 降级兜底方案
-        val encoded = Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        val encoded = base64Encode(plainText.toByteArray(Charsets.UTF_8))
         return "$PREFIX_V1$encoded"
     }
 
@@ -79,7 +113,7 @@ object CryptoManager {
             val secretKey = getOrCreateSecretKey()
             if (secretKey != null) {
                 try {
-                    val rawCombined = Base64.decode(encodedText.removePrefix(PREFIX_V2), Base64.NO_WRAP)
+                    val rawCombined = base64Decode(encodedText.removePrefix(PREFIX_V2))
                     if (rawCombined.size > GCM_IV_LENGTH) {
                         val iv = ByteArray(GCM_IV_LENGTH)
                         val cipherText = ByteArray(rawCombined.size - GCM_IV_LENGTH)
@@ -93,17 +127,20 @@ object CryptoManager {
                         return String(decrypted, Charsets.UTF_8)
                     }
                 } catch (e: Exception) {
-                    // 解密异常
+                    logError("CryptoManager", "Keystore AES-GCM 解密失败: ${e.message}")
                 }
             }
+            // 解密失败返回空字符串，避免将密文乱码直接当作明文 API Key 发出或展示
+            return ""
         }
 
         if (encodedText.startsWith(PREFIX_V1)) {
             val actualEncodedText = encodedText.removePrefix(PREFIX_V1)
             return try {
-                String(Base64.decode(actualEncodedText, Base64.NO_WRAP), Charsets.UTF_8)
+                String(base64Decode(actualEncodedText), Charsets.UTF_8)
             } catch (e: Exception) {
-                encodedText
+                logError("CryptoManager", "Base64 解密失败: ${e.message}")
+                ""
             }
         }
 

@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 6,
-    "identityHash": "6f3bd8402d882e417c768d03b4eb4b6e",
+    "version": 7,
+    "identityHash": "6771bae3ba4f39a3fc484c33137d6153",
     "entities": [
       {
         "tableName": "daily_work_logs",
@@ -150,7 +150,7 @@
       },
       {
         "tableName": "user_settings",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `apiKey` TEXT NOT NULL, `baseUrl` TEXT NOT NULL, `selectedModel` TEXT NOT NULL, `themeMode` TEXT NOT NULL, `apiProvider` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `apiKey` TEXT NOT NULL, `baseUrl` TEXT NOT NULL, `selectedModel` TEXT NOT NULL, `themeMode` TEXT NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -179,12 +179,6 @@
           {
             "fieldPath": "themeMode",
             "columnName": "themeMode",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "apiProvider",
-            "columnName": "apiProvider",
             "affinity": "TEXT",
             "notNull": true
           }
@@ -241,7 +235,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6f3bd8402d882e417c768d03b4eb4b6e')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6771bae3ba4f39a3fc484c33137d6153')"
     ]
   }
 }
