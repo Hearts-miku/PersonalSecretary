@@ -1,10 +1,10 @@
 # 代码审计报告 — PersonalSecretary / WorkLogResume
 
-**审计对象**：`main` @ [`2589cdd`](https://github.com/Hearts-miku/PersonalSecretary/commit/2589cdd) `feat: upgrade security and data management`
-**更新日期**：2026-09-10（第 9 轮）
+**审计对象**：`main` @ [`c5a0225`](https://github.com/Hearts-miku/PersonalSecretary/commit/c5a0225) `refactor: remove redundant AI summary trigger method`
+**更新日期**：2026-09-10（第 10 轮）
 **性质**：只读审计
 
-> 本分支**只存放审计文档，不含源码**。代码链接指向 `2589cdd`，行号长期有效。
+> 本分支**只存放审计文档，不含源码**。代码链接指向 `c5a0225`，行号长期有效。
 > 每轮全量重写；发现编号跨轮次稳定，已解决项移入 [07-已修复与回归记录.md](07-已修复与回归记录.md)。
 
 ---
@@ -12,7 +12,7 @@
 ## 产品前提（影响严重级判定）
 
 **应用尚未发布，线上没有存量用户。** 「升级会损坏存量数据」类的发现不作为缺陷记录。
-若发布计划有变，[02-P1](02-P1-功能与安全.md) 里的判定需要重新评估。
+发布前需要处理的事项集中在 [06-修复顺序建议.md](06-修复顺序建议.md) 的发布检查清单。
 
 ---
 
@@ -21,12 +21,12 @@
 | 文件 | 内容 |
 |---|---|
 | [01-P0-阻断项.md](01-P0-阻断项.md) | **0 项** |
-| [02-P1-功能与安全.md](02-P1-功能与安全.md) | 1 项（P0-6 回归） |
-| [03-P2-健壮性与体验.md](03-P2-健壮性与体验.md) | 13 项 |
-| [04-P3-清理项.md](04-P3-清理项.md) | D-1 残留、构建配置 |
+| [02-P1-功能与安全.md](02-P1-功能与安全.md) | **0 项** |
+| [03-P2-健壮性与体验.md](03-P2-健壮性与体验.md) | 10 项 |
+| [04-P3-清理项.md](04-P3-清理项.md) | 死代码、D-1 残留、构建配置 |
 | [05-架构观察.md](05-架构观察.md) | 结构性问题 |
-| [06-修复顺序建议.md](06-修复顺序建议.md) | 优先级与批次划分 |
-| [07-已修复与回归记录.md](07-已修复与回归记录.md) | 已解决 **64 项**；含四次回归事件 |
+| [06-修复顺序建议.md](06-修复顺序建议.md) | 优先级与发布检查清单 |
+| [07-已修复与回归记录.md](07-已修复与回归记录.md) | 已解决 **74 项**；含四次回归事件 |
 
 ---
 
@@ -35,49 +35,48 @@
 | 严重级 | 未决 | 本轮变化 |
 |---|---|---|
 | P0 | **0** | 保持 |
-| P1 | **1** | 原有 3 项全部解决；P0-6 回归 |
-| P2 | **13** | 解决 7 项；新增 2 项 |
-| P3 | — | D-1 留下 2 处残留 |
+| P1 | **0** | P0-6 回归解决；**首次 P0 与 P1 同时清零** |
+| P2 | **10** | 解决 5 项；新增 2 项 |
+| P3 | — | 新增 1 处死代码 |
 
-### 本轮是迄今推进最大的一轮
-
-一次完成了此前计划中的 6 个批次：
+### 本轮完成了上一轮计划的批次 1~4
 
 | 批次 | 内容 | 结果 |
 |---|---|---|
-| 1 | Gradle wrapper | ✅ 已提交，干净克隆可构建 |
-| 2 | [P1-17](07-已修复与回归记录.md) 占位域名 | ✅ 默认值改空 + 三项配置各自提前失败 + 占位符仅作 `placeholder` |
-| 3 | [D-1](07-已修复与回归记录.md) 单 provider 收敛 | ✅ `GeminiRepository` → `AiRepository`，两条路径删除 |
-| 4 | [P1-16](07-已修复与回归记录.md) 标签缺口 | ✅ 查询词与日志内容均消毒并包标签，另加 18000 字预算 |
-| 7 | [P1-4](07-已修复与回归记录.md) 真加密 | ✅ Android Keystore + AES-256-GCM，`v2:` 前缀向下兼容 |
-| 5/8 | 清理与 P2 | ✅ N-15、N-16、N-17、P2-4、P2-19、P2-22 |
+| 1 | 恢复 schema 导出 | ✅ `exportSchema = true`、`7.json` 生成且与实体逐列一致、失效的 5/6 已删、改用非废弃的 `fallbackToDestructiveMigration(dropAllTables = true)` |
+| 2 | 补测试 | ✅ 新增 `CryptoManagerTest`（6 例）与 `AiRepositoryValidationTest`（4 例） |
+| 3 | 加解密收口 | ✅ [N-19](07-已修复与回归记录.md) 解密失败返回空串 + 降级路径记日志；[N-20](07-已修复与回归记录.md) 编解码边界收到 Repository |
+| 4 | D-1 收尾与清理 | ✅ `.env` 系列删除、`buildConfig = false`、未用 import 清理、proguard 规则补齐 |
 
-**D-1 执行得很准确。** 审计曾特别标注「不要连带删掉仍然有用的保护」——核对结果：
-OpenAI 的 `finish_reason == "length"` 截断检测（[AiRepository.kt:131](https://github.com/Hearts-miku/PersonalSecretary/blob/2589cdd/app/src/main/java/com/example/data/ai/AiRepository.kt#L131)）
-与 o1/o3 的 `temperature` 保护（[:108](https://github.com/Hearts-miku/PersonalSecretary/blob/2589cdd/app/src/main/java/com/example/data/ai/AiRepository.kt#L108)）
-都完整保留。全项目搜索 `gemini` / `anthropic` 仅剩 `metadata.json` 一处。
+顺带解决了 **P2-5**（主页按钮先切到今天）与 **P2-13**（导入加 1MB + 10 万字双限）。
 
-### 唯一需要留意的方向性问题
+### 测试终于有了实质内容
 
-[P0-6 回归](02-P1-功能与安全.md)：数据库回到 `fallbackToDestructiveMigration()`，
-且 `exportSchema` 从 `true` 改回 `false`。
+新增的两个测试文件设计得讲究——`CryptoManager` 新增的 `base64Encode` / `base64Decode`
+优先使用 `java.util.Base64`、失败才回落 `android.util.Base64`，**正是这个改动让加解密逻辑
+可以在纯 JVM 单测里跑通**，绕开了 `android.util` 的 "not mocked" 问题。
 
-未发布阶段用破坏性迁移是合理的取舍；但**关掉 schema 导出有累积成本**——schema 历史只能
-在版本存在的当下捕获，v7 现在没有对应的 json，将来写 7→8 迁移只能手工重建。
+审计已逐条验算：`testDecode_v1LegacyPrefix` 里硬编码的 Base64 常量与明文完全对应；
+四个 `AiRepositoryValidationTest` 用例都不会触发 Base64 调用路径。
+
+### 需要注意的是新引入的取消机制
+
+本轮引入 `activeAiJob` 让 AI 任务可被打断，带来两个副作用：
+[N-21](03-P2-健壮性与体验.md)（被取消协程的进度标志不会复位）与
+[N-22](03-P2-健壮性与体验.md)（双写管线可被中途打断）。后者把一个长期存在的架构问题
+从「进程被杀才会遇到」变成了「日常操作可触及」。
 
 ---
 
 ## 审计覆盖
 
-逐行阅读：构建配置（含新增的 wrapper）、数据层（含重写的 `CryptoManager`）、
-AI 层（重命名后的 `AiRepository`）、全部 UI 层、测试。
+逐行阅读：构建配置、数据层、AI 层、全部 UI 层、**三个测试文件**、`7.json`、proguard 规则。
 未覆盖：`Color.kt`、图片资源、`.idea/`、`gradle-wrapper.jar`（二进制）。
 
 ## 未执行的验证
 
-**本审计从未编译或运行过代码。** wrapper 现已提交，下一轮起可以实际构建验证。
-以下需实机复现：
+**本审计从未编译或运行过代码**，但 wrapper 已在仓库中，下一轮可实际验证。以下需实机复现：
 
-- [N-19](03-P2-健壮性与体验.md) Keystore 异常路径 —— 依赖设备行为，静态分析只能确认代码路径存在
-- [P2-4](07-已修复与回归记录.md) 日历跨月的修法已静态确认正确，但未运行验证
-- 本轮两处未使用 import 已确认正文零引用，判定为警告而非错误
+- 新增两个测试文件的实际通过情况（已逐条静态验算，含 Base64 常量与异常传播链）
+- [N-21](03-P2-健壮性与体验.md) 标志卡死的触发路径（依赖协程取消时序）
+- `CryptoManager` 的 `v2:` 路径在 JVM 单测中不可达，需 instrumented test 覆盖
