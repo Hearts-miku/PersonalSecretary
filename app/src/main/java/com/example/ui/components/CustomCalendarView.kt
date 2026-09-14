@@ -59,6 +59,14 @@ fun CustomCalendarView(
 
     val monthFormat = remember { SimpleDateFormat("yyyy年 MM月", Locale.CHINA) }
     val dayFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.ROOT) }
+    val todayStr = remember { SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date()) }
+
+    val isCurrentOrFutureMonth = remember(currentMonthCalendar) {
+        val now = Calendar.getInstance()
+        currentMonthCalendar.get(Calendar.YEAR) > now.get(Calendar.YEAR) ||
+            (currentMonthCalendar.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
+             currentMonthCalendar.get(Calendar.MONTH) >= now.get(Calendar.MONTH))
+    }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -92,14 +100,18 @@ fun CustomCalendarView(
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
-                IconButton(onClick = {
-                    val cal = currentMonthCalendar.clone() as Calendar
-                    cal.add(Calendar.MONTH, 1)
-                    currentMonthCalendar = cal
-                }) {
+                IconButton(
+                    onClick = {
+                        val cal = currentMonthCalendar.clone() as Calendar
+                        cal.add(Calendar.MONTH, 1)
+                        currentMonthCalendar = cal
+                    },
+                    enabled = !isCurrentOrFutureMonth
+                ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = "下一月"
+                        contentDescription = "下一月",
+                        tint = if (!isCurrentOrFutureMonth) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                     )
                 }
             }
@@ -148,6 +160,7 @@ fun CustomCalendarView(
                                 val calDay = currentMonthCalendar.clone() as Calendar
                                 calDay.set(Calendar.DAY_OF_MONTH, currentDayNum)
                                 val dateStr = dayFormat.format(calDay.time)
+                                val isFuture = dateStr > todayStr
 
                                 val isSelected = dateStr == selectedDate
                                 val hasLog = datesWithLogs.contains(dateStr)
@@ -163,7 +176,7 @@ fun CustomCalendarView(
                                             else if (hasLog) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                                             else Color.Transparent
                                         )
-                                        .clickable {
+                                        .clickable(enabled = !isFuture) {
                                             onDateSelected(dateStr)
                                         },
                                     contentAlignment = Alignment.Center
@@ -179,6 +192,7 @@ fun CustomCalendarView(
                                                 fontWeight = if (isSelected || hasLog) FontWeight.Bold else FontWeight.Normal
                                             ),
                                             color = when {
+                                                isFuture -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)
                                                 isSelected -> MaterialTheme.colorScheme.onPrimary
                                                 hasLog -> MaterialTheme.colorScheme.primary
                                                 else -> MaterialTheme.colorScheme.onSurface

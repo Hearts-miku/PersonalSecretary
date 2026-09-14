@@ -28,7 +28,9 @@ import androidx.compose.ui.unit.dp
 import com.example.ui.components.CustomCalendarView
 import com.example.ui.components.MarkdownText
 import com.example.ui.viewmodel.WorkLogViewModel
+import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimelineScreen(viewModel: WorkLogViewModel) {
     val selectedDate by viewModel.selectedDate.collectAsState()
@@ -42,15 +44,13 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
     val searchResults by viewModel.searchResults.collectAsState()
 
     var showRawNotes by remember { mutableStateOf(false) }
+    var viewedDiaryDate by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
     val datesWithLogs = remember(allLogs) {
         allLogs.filter { it.summaryMarkdown.isNotBlank() || it.rawNotes.isNotBlank() }
             .map { it.date }
             .toSet()
-    }
-
-    val quickQueries = remember {
-        listOf("数据库维度", "Bug 修复", "性能优化", "接口重构", "需求沟通", "项目部署")
     }
 
     val scrollState = rememberScrollState()
@@ -82,21 +82,6 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onBackground
                 )
-            }
-
-            // AI Re-summarize Button
-            FilledTonalButton(
-                onClick = { viewModel.triggerAISummarizeSelectedDate() },
-                enabled = !isProcessingAI,
-                modifier = Modifier.testTag("timeline_resummarize_btn")
-            ) {
-                Icon(
-                    imageVector = if (isProcessingAI) Icons.Default.AutoAwesome else Icons.Default.Refresh,
-                    contentDescription = "重新总结",
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(if (isProcessingAI) "整理中..." else "AI重新总结")
             }
         }
 
@@ -162,31 +147,6 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp)
                 )
-
-                // Quick Suggestion Chips
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    item {
-                        Text(
-                            text = "热搜推荐:",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    items(quickQueries) { tag ->
-                        FilterChip(
-                            selected = searchQuery == tag,
-                            onClick = {
-                                viewModel.onSearchQueryChanged(tag)
-                                viewModel.performSemanticSearch(tag)
-                            },
-                            label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                    }
-                }
             }
         }
 
@@ -263,6 +223,9 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                                     .fillMaxWidth()
                                     .clickable {
                                         viewModel.selectDate(result.date)
+                                        coroutineScope.launch {
+                                            scrollState.animateScrollTo(scrollState.maxValue)
+                                        }
                                     },
                                 shape = RoundedCornerShape(12.dp),
                                 colors = CardDefaults.outlinedCardColors(
@@ -288,7 +251,12 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                                         )
 
                                         SuggestionChip(
-                                            onClick = { viewModel.selectDate(result.date) },
+                                            onClick = {
+                                                viewModel.selectDate(result.date)
+                                                coroutineScope.launch {
+                                                    scrollState.animateScrollTo(scrollState.maxValue)
+                                                }
+                                            },
                                             label = {
                                                 Text(
                                                     text = "${result.relevanceScore}% 匹配",
@@ -323,7 +291,18 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.End
                                     ) {
-                                        TextButton(onClick = { viewModel.selectDate(result.date) }) {
+                                        TextButton(
+                                            onClick = {
+                                                viewModel.selectDate(result.date)
+                                                viewedDiaryDate = result.date
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.Notes,
+                                                contentDescription = "查看完整日记",
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
                                             Text("查看完整日记", style = MaterialTheme.typography.labelSmall)
                                         }
                                     }
@@ -406,7 +385,7 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "可在主页输入该日期的工作内容，然后点击右上角“AI重新总结”",
+                                text = "可在主页选择该日期并录入工作内容，提交后点击主页的“立即AI整理”即可。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
@@ -420,9 +399,117 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                     )
                 } else {
                     MarkdownText(
-                        markdown = if (log.summaryMarkdown.isNotBlank()) log.summaryMarkdown else "AI总结尚未生成，请点击上方“AI重新总结”。\n\n原始数据：\n${log.rawNotes}"
+                        markdown = if (log.summaryMarkdown.isNotBlank()) log.summaryMarkdown else "AI总结尚未生成，可在主页点击“立即AI整理”自动生成。\n\n原始数据：\n${log.rawNotes}"
                     )
                 }
+            }
+        }
+    }
+
+    // ModalBottomSheet for Full Diary Preview from Search Results
+    if (viewedDiaryDate != null) {
+        val targetDate = viewedDiaryDate!!
+        val diaryLog = allLogs.find { it.date == targetDate } ?: (if (selectedDate == targetDate) selectedDateLog else null)
+        var showRawInSheet by remember(targetDate) { mutableStateOf(false) }
+
+        ModalBottomSheet(
+            onDismissRequest = { viewedDiaryDate = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "【$targetDate】完整日记",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = if (diaryLog?.isSummarized == true) "AI 整理完毕" else "未完成AI总结",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (diaryLog?.isSummarized == true) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    FilterChip(
+                        selected = showRawInSheet,
+                        onClick = { showRawInSheet = !showRawInSheet },
+                        label = {
+                            Text(if (showRawInSheet) "查看AI总结" else "查看原始笔记")
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Notes,
+                                contentDescription = "切换",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                if (diaryLog == null || (diaryLog.summaryMarkdown.isBlank() && diaryLog.rawNotes.isBlank())) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "【$targetDate】暂无详细记录",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else if (showRawInSheet) {
+                    Text(
+                        text = "--- 原始输入笔记 ---\n" + (diaryLog.rawNotes.ifBlank { "无原始笔记" }),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                } else {
+                    MarkdownText(
+                        markdown = if (diaryLog.summaryMarkdown.isNotBlank()) diaryLog.summaryMarkdown else "AI总结尚未生成。\n\n原始笔记：\n${diaryLog.rawNotes}"
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { viewedDiaryDate = null },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("关闭")
+                    }
+                    Button(
+                        onClick = {
+                            viewedDiaryDate = null
+                            viewModel.selectDate(targetDate)
+                            coroutineScope.launch {
+                                scrollState.animateScrollTo(scrollState.maxValue)
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("在时间线中定位")
+                    }
+                }
+                Spacer(modifier = Modifier.height(32.dp))
             }
         }
     }

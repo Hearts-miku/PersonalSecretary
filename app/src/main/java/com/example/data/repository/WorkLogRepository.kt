@@ -39,6 +39,12 @@ class WorkLogRepository(private val context: Context) {
         return SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
     }
 
+    fun getYesterdayString(): String {
+        val cal = java.util.Calendar.getInstance()
+        cal.add(java.util.Calendar.DAY_OF_YEAR, -1)
+        return SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(cal.time)
+    }
+
     suspend fun getSettings(): UserSettingsEntity = withContext(Dispatchers.IO) {
         val s = settingsDao.getSettings() ?: UserSettingsEntity().also { settingsDao.saveSettings(it) }
         s.copy(apiKey = com.example.data.local.CryptoManager.decode(s.apiKey))
@@ -139,7 +145,13 @@ class WorkLogRepository(private val context: Context) {
         try {
             onProgress("正在读取待处理工作记录...")
             val logEntity = logDao.getLogByDate(targetDate)
-            val rawContent = logEntity?.rawNotes.orEmpty()
+            val rawContent = if (!logEntity?.rawNotes.isNullOrBlank()) {
+                logEntity!!.rawNotes
+            } else if (!logEntity?.summaryMarkdown.isNullOrBlank()) {
+                logEntity!!.summaryMarkdown
+            } else {
+                ""
+            }
 
             if (rawContent.isBlank()) {
                 return@withContext Result.failure(Exception("【$targetDate】没有待整理的原始输入数据"))
@@ -533,6 +545,14 @@ class WorkLogRepository(private val context: Context) {
 
     suspend fun getMarkdownDirectoryInfo(): Map<String, String> = withContext(Dispatchers.IO) {
         markdownManager.getMarkdownDirectoryInfo()
+    }
+
+    suspend fun testAiConnection(
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): Result<String> {
+        return aiRepository.testConnection(baseUrl, apiKey, model)
     }
 
     suspend fun clearAllData() = withContext(Dispatchers.IO) {

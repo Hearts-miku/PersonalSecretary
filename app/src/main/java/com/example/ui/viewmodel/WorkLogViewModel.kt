@@ -72,6 +72,7 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         _isGeneratingProjectExp.value = false
         _isImportingFile.value = false
         _isSearchingLogs.value = false
+        _isTestingConnection.value = false
         _aiStatusMessage.value = ""
         showSnack("已取消当前 AI 任务")
     }
@@ -79,6 +80,12 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     // AI Processing States
     private val _isProcessingAI = MutableStateFlow(false)
     val isProcessingAI: StateFlow<Boolean> = _isProcessingAI.asStateFlow()
+
+    private val _isTestingConnection = MutableStateFlow(false)
+    val isTestingConnection: StateFlow<Boolean> = _isTestingConnection.asStateFlow()
+
+    private val _connectionTestResult = MutableStateFlow<String?>(null)
+    val connectionTestResult: StateFlow<String?> = _connectionTestResult.asStateFlow()
 
     private val _isImportingFile = MutableStateFlow(false)
     val isImportingFile: StateFlow<Boolean> = _isImportingFile.asStateFlow()
@@ -135,15 +142,18 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         val text = _rawInputText.value.trim()
         if (text.isEmpty()) return
 
+        val targetDate = _selectedDate.value.ifBlank { repository.getTodayString() }
         viewModelScope.launch {
-            repository.addRawNote(text, repository.getTodayString())
+            repository.addRawNote(text, targetDate)
             _rawInputText.value = ""
-            showSnack("已归档日志！稍后AI将自动总结。")
+            val isToday = targetDate == repository.getTodayString()
+            showSnack(if (isToday) "已归档今日日志！稍后AI将自动总结。" else "已归档【$targetDate】日志！稍后AI将自动总结。")
         }
     }
 
     fun selectDate(dateStr: String) {
-        _selectedDate.value = dateStr
+        val today = repository.getTodayString()
+        _selectedDate.value = if (dateStr > today) today else dateStr
     }
 
     fun triggerAISummarizeToday() {
@@ -172,11 +182,54 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun triggerAISummarizeAllUnsummarized() {
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
+            val unsummarizedLogs = allLogs.value.filter { !it.isSummarized && it.rawNotes.isNotBlank() }
+            if (unsummarizedLogs.isEmpty()) {
+                // If there are no unsummarized logs, summarize current selected date
+                triggerAISummarizeSelectedDate()
+                return@launch
+            }
+
+            _isProcessingAI.value = true
+            val total = unsummarizedLogs.size
+            var successCount = 0
+            var failureCount = 0
+
+            // Prioritize selectedDate first if it is among unsummarized
+            val sortedList = unsummarizedLogs.sortedByDescending { it.date == _selectedDate.value }
+
+            for ((index, log) in sortedList.withIndex()) {
+                val date = log.date
+                _selectedDate.value = date
+                _aiStatusMessage.value = "正在对【$date】进行 AI 结构化整理 (${index + 1}/$total)..."
+                
+                val result = repository.triggerAISummarize(date) { msg ->
+                    _aiStatusMessage.value = "【$date】$msg"
+                }
+                if (result.isSuccess) {
+                    successCount++
+                } else {
+                    failureCount++
+                }
+            }
+
+            _isProcessingAI.value = false
+            if (failureCount == 0) {
+                if (total == 1) {
+                    showSnack("【${sortedList.first().date}】AI 整理完成！")
+                } else {
+                    showSnack("已成功整理全部 $successCount 个日期的工作日志！")
+                }
+            } else {
+                showSnack("整理完成：$successCount 个成功，$failureCount 个失败")
+            }
+        }
+    }
+
     fun triggerAISummarizeForUnsummarizedOrSelected() {
-        val unsummarized = allLogs.value.firstOrNull { !it.isSummarized && it.rawNotes.isNotBlank() }
-        val targetDate = unsummarized?.date ?: _selectedDate.value
-        selectDate(targetDate)
-        triggerAISummarizeSelectedDate()
+        triggerAISummarizeAllUnsummarized()
     }
 
     fun triggerManualScheduledTask() {
@@ -317,6 +370,60 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
             repository.saveSettings(newSettings)
             showSnack("设置已保存")
         }
+    }
+
+    fun testAiConnection(baseUrl: String, apiKey: String, model: String) {
+        val trimmedUrl = baseUrl.trim()
+        val trimmedKey = apiKey.trim()
+        val trimmedModel = model.trim()
+
+        if (trimmedUrl.isBlank()) {
+            _connectionTestResult.value = "连接失败: 未配置 Base URL，请输入有效的 API Base URL"
+            showSnack("请输入 Base URL")
+            return
+        }
+        if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+            _connectionTestResult.value = "连接失败: Base URL 必须以 http:// 或 https:// 开头"
+            showSnack("Base URL 格式错误")
+            return
+        }
+        if (trimmedKey.isBlank()) {
+            _connectionTestResult.value = "连接失败: 未配置 API Key，请输入您的 API Key"
+            showSnack("请输入 API Key")
+            return
+        }
+        if (trimmedModel.isBlank()) {
+            _connectionTestResult.value = "连接失败: 未配置模型名称，请输入有效的模型标识"
+            showSnack("请输入模型名称")
+            return
+        }
+
+        if (_isTestingConnection.value) return
+        viewModelScope.launch {
+            _isTestingConnection.value = true
+            _connectionTestResult.value = null
+            val startTime = System.currentTimeMillis()
+            val result = repository.testAiConnection(trimmedUrl, trimmedKey, trimmedModel)
+            val duration = System.currentTimeMillis() - startTime
+            _isTestingConnection.value = false
+
+            if (result.isSuccess) {
+                val responseText = result.getOrDefault("").trim()
+                val snippet = if (responseText.length > 60) responseText.take(60) + "..." else responseText
+                val msg = "连接成功（耗时 ${duration}ms）\n模型响应：$snippet"
+                _connectionTestResult.value = msg
+                showSnack("API 连接测试成功 (${duration}ms)")
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "未知异常"
+                val msg = "连接失败: $err"
+                _connectionTestResult.value = msg
+                showSnack("连接测试失败: $err")
+            }
+        }
+    }
+
+    fun clearConnectionTestResult() {
+        _connectionTestResult.value = null
     }
 
     fun restoreExperienceVersion(version: com.example.data.local.ExperienceVersionEntity) {

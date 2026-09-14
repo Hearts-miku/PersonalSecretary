@@ -6,7 +6,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,7 +18,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.ui.viewmodel.WorkLogViewModel
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: WorkLogViewModel,
@@ -26,13 +34,82 @@ fun HomeScreen(
     val unsummarizedCount by viewModel.unsummarizedCount.collectAsState()
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
     val aiStatusMessage by viewModel.aiStatusMessage.collectAsState()
+    val selectedDate by viewModel.selectedDate.collectAsState()
+
+    val todayStr = remember { viewModel.repository.getTodayString() }
+    val yesterdayStr = remember { viewModel.repository.getYesterdayString() }
+    var showDatePickerDialog by remember { mutableStateOf(false) }
+
+    if (showDatePickerDialog) {
+        val initialEpochMillis = remember(selectedDate) {
+            try {
+                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
+                sdf.timeZone = TimeZone.getTimeZone("UTC")
+                sdf.parse(selectedDate)?.time
+            } catch (e: Exception) {
+                null
+            }
+        }
+        val maxSelectableDateMillis = remember {
+            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+            cal.set(Calendar.HOUR_OF_DAY, 23)
+            cal.set(Calendar.MINUTE, 59)
+            cal.set(Calendar.SECOND, 59)
+            cal.set(Calendar.MILLISECOND, 999)
+            cal.timeInMillis
+        }
+        val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
+
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initialEpochMillis,
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    return utcTimeMillis <= maxSelectableDateMillis
+                }
+
+                override fun isSelectableYear(year: Int): Boolean {
+                    return year <= currentYear
+                }
+            }
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePickerDialog = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
+                            sdf.timeZone = TimeZone.getTimeZone("UTC")
+                            val formatted = sdf.format(Date(millis))
+                            if (formatted <= todayStr) {
+                                viewModel.selectDate(formatted)
+                            } else {
+                                viewModel.selectDate(todayStr)
+                            }
+                        }
+                        showDatePickerDialog = false
+                    },
+                    modifier = Modifier.testTag("confirm_date_pick_btn")
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePickerDialog = false }) {
+                    Text("取消")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // App Header Banner
         Card(
@@ -45,7 +122,7 @@ fun HomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp),
+                    .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -96,7 +173,7 @@ fun HomeScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "当前有 $unsummarizedCount 条未整理输入",
+                            text = "当前有 $unsummarizedCount 个日期的待整理输入",
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onTertiaryContainer
                         )
@@ -104,7 +181,7 @@ fun HomeScreen(
 
                     Button(
                         onClick = {
-                            viewModel.triggerAISummarizeToday()
+                            viewModel.triggerAISummarizeAllUnsummarized()
                         },
                         enabled = !isProcessingAI,
                         colors = ButtonDefaults.buttonColors(
@@ -131,6 +208,97 @@ fun HomeScreen(
             )
         }
 
+        // Recording Date Selector Bar
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarMonth,
+                        contentDescription = "记录日期",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "记录日期: $selectedDate",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        color = when (selectedDate) {
+                            todayStr -> MaterialTheme.colorScheme.primaryContainer
+                            yesterdayStr -> MaterialTheme.colorScheme.secondaryContainer
+                            else -> MaterialTheme.colorScheme.tertiaryContainer
+                        },
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = when (selectedDate) {
+                                todayStr -> "今天"
+                                yesterdayStr -> "昨天"
+                                else -> "历史"
+                            },
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = when (selectedDate) {
+                                todayStr -> MaterialTheme.colorScheme.onPrimaryContainer
+                                yesterdayStr -> MaterialTheme.colorScheme.onSecondaryContainer
+                                else -> MaterialTheme.colorScheme.onTertiaryContainer
+                            },
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (selectedDate != todayStr) {
+                        FilledTonalButton(
+                            onClick = { viewModel.selectDate(todayStr) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(30.dp)
+                        ) {
+                            Text("今天", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    if (selectedDate != yesterdayStr) {
+                        OutlinedButton(
+                            onClick = { viewModel.selectDate(yesterdayStr) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(30.dp)
+                        ) {
+                            Text("昨天", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    IconButton(
+                        onClick = { showDatePickerDialog = true },
+                        modifier = Modifier
+                            .size(30.dp)
+                            .testTag("pick_date_icon_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Today,
+                            contentDescription = "选择其他日期",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // Main User Input Area
         OutlinedTextField(
             value = rawText,
@@ -141,7 +309,11 @@ fun HomeScreen(
                 .testTag("home_input_textfield"),
             placeholder = {
                 Text(
-                    text = "在此输入您今天完成的任何工作内容、技术思考、解决的问题或任务记录...\n\n示例：\n• 重构了用户模块的 Room 数据库结构，提升查询性能30%\n• 完成了 AI 接口防注入过滤处理\n• 与产品经理沟通明天的上线计划",
+                    text = if (selectedDate == todayStr) {
+                        "在此输入您今天完成的任何工作内容、技术思考、解决的问题或任务记录...\n\n示例：\n• 重构了用户模块的 Room 数据库结构，提升查询性能30%\n• 完成了 AI 接口防注入过滤处理\n• 与产品经理沟通明天的上线计划"
+                    } else {
+                        "在此输入【$selectedDate】完成的工作内容、技术思考或补记记录...\n\n提交后可点击上方的“立即AI整理”自动生成该日期的总结与待办事项。"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )
@@ -166,9 +338,10 @@ fun HomeScreen(
             Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "提交")
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "提交记录到临时日志",
+                text = if (selectedDate == todayStr) "提交记录到今日临时日志" else "提交记录到【$selectedDate】临时日志",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
             )
         }
     }
 }
+

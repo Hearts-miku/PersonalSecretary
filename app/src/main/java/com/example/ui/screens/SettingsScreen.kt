@@ -8,6 +8,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
@@ -52,6 +54,9 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
     var baseUrlText by rememberSaveable { mutableStateOf(settings.baseUrl) }
     var selectedModel by rememberSaveable { mutableStateOf(settings.selectedModel) }
     var hideKey by remember { mutableStateOf(true) }
+
+    val isTestingConnection by viewModel.isTestingConnection.collectAsState()
+    val connectionTestResult by viewModel.connectionTestResult.collectAsState()
 
     val mdInfo by viewModel.mdInfo.collectAsState()
 
@@ -232,24 +237,110 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     )
                 }
 
-                Button(
-                    onClick = {
-                        val trimmedUrl = baseUrlText.trim()
-                        if (trimmedUrl.isNotBlank() && !trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
-                            viewModel.showSnack("Base URL 必须以 http:// 或 https:// 开头")
-                            return@Button
-                        }
-                        viewModel.updateSettings(
-                            settings.copy(
-                                apiKey = apiKeyText.trim(),
-                                baseUrl = trimmedUrl,
-                                selectedModel = selectedModel.trim()
+                // 连接测试结果横幅
+                connectionTestResult?.let { testResult ->
+                    val isSuccess = testResult.startsWith("连接成功")
+                    Surface(
+                        color = if (isSuccess) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                               else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("connection_test_result_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isSuccess) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                contentDescription = if (isSuccess) "测试成功" else "测试失败",
+                                tint = if (isSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
                             )
-                        )
-                    },
-                    modifier = Modifier.align(Alignment.End).testTag("save_api_settings_button")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = testResult,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isSuccess) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { viewModel.clearConnectionTestResult() },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .testTag("dismiss_test_result_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "关闭",
+                                    tint = if (isSuccess) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 操作按钮栏：测试连接 + 保存配置
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("保存 API 配置")
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.testAiConnection(
+                                baseUrl = baseUrlText,
+                                apiKey = apiKeyText,
+                                model = selectedModel
+                            )
+                        },
+                        enabled = !isTestingConnection,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("test_api_connection_button")
+                    ) {
+                        if (isTestingConnection) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("测试中...", style = MaterialTheme.typography.labelMedium)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("测试连接", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val trimmedUrl = baseUrlText.trim()
+                            if (trimmedUrl.isNotBlank() && !trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+                                viewModel.showSnack("Base URL 必须以 http:// 或 https:// 开头")
+                                return@Button
+                            }
+                            viewModel.updateSettings(
+                                settings.copy(
+                                    apiKey = apiKeyText.trim(),
+                                    baseUrl = trimmedUrl,
+                                    selectedModel = selectedModel.trim()
+                                )
+                            )
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("save_api_settings_button")
+                    ) {
+                        Text("保存 API 配置", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }

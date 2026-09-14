@@ -6,9 +6,9 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "daily_work_logs")
 data class DailyWorkLogEntity(
     @PrimaryKey val date: String, // Format: YYYY-MM-DD
-    val rawNotes: String,
-    val summaryMarkdown: String,
-    val isSummarized: Boolean,
+    val rawNotes: String = "",
+    val summaryMarkdown: String = "",
+    val isSummarized: Boolean = false,
     val updatedAt: Long = System.currentTimeMillis()
 )
 

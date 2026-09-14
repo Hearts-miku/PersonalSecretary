@@ -76,6 +76,58 @@ class AiRepository {
         }
     }
 
+    /**
+     * 测试用户配置的自定义 OpenAI 兼容接口连通性。
+     */
+    suspend fun testConnection(
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val trimmedUrl = baseUrl.trim()
+            val trimmedKey = apiKey.trim()
+            val trimmedModel = model.trim()
+
+            if (trimmedUrl.isBlank()) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("未配置 Base URL。请输入有效的 API Base URL。")
+                )
+            }
+            if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("Base URL 必须以 http:// 或 https:// 开头。")
+                )
+            }
+            if (trimmedKey.isBlank()) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("未配置 API Key。请输入您的 API Key。")
+                )
+            }
+            if (trimmedModel.isBlank()) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("未配置模型名称。请输入有效的模型标识。")
+                )
+            }
+
+            val normalizedUrl = if (trimmedUrl.endsWith("/") || trimmedUrl.endsWith("chat/completions") || trimmedUrl.endsWith("chat/completions/")) {
+                trimmedUrl
+            } else {
+                "$trimmedUrl/"
+            }
+
+            callOpenAiApi(
+                baseUrl = normalizedUrl,
+                apiKey = trimmedKey,
+                model = trimmedModel,
+                prompt = "请回复“OK”两个字母以测试 API 连接连通性。",
+                systemInstruction = "You are a connectivity test assistant. Respond briefly with 'OK'."
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun callOpenAiApi(
         baseUrl: String,
         apiKey: String,
