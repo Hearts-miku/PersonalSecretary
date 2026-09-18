@@ -3,12 +3,14 @@ package com.example.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,6 +21,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.local.TodoItemEntity
 import com.example.ui.viewmodel.WorkLogViewModel
 
@@ -28,14 +31,25 @@ fun TodoListScreen(viewModel: WorkLogViewModel) {
     val lastDeletedTodo by viewModel.lastDeletedTodo.collectAsState()
 
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, PENDING, COMPLETED, HIGH
+    var selectedProject by remember { mutableStateOf<String?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
 
-    val filteredTodos = remember(allTodos, selectedFilter) {
-        when (selectedFilter) {
-            "PENDING" -> allTodos.filter { !it.isCompleted }
-            "COMPLETED" -> allTodos.filter { it.isCompleted }
-            "HIGH" -> allTodos.filter { it.priority == "HIGH" }
-            else -> allTodos
+    val availableProjects = remember(allTodos) {
+        allTodos.map { it.category.trim() }
+            .filter { it.isNotBlank() && it != "Work" && it != "工作" && it != "通用项目" }
+            .distinct()
+    }
+
+    val filteredTodos = remember(allTodos, selectedFilter, selectedProject) {
+        allTodos.filter { todo ->
+            val statusMatch = when (selectedFilter) {
+                "PENDING" -> !todo.isCompleted
+                "COMPLETED" -> todo.isCompleted
+                "HIGH" -> todo.priority == "HIGH"
+                else -> true
+            }
+            val projectMatch = selectedProject == null || todo.category.trim() == selectedProject
+            statusMatch && projectMatch
         }
     }
 
@@ -111,6 +125,46 @@ fun TodoListScreen(viewModel: WorkLogViewModel) {
                 }
             }
 
+            // Project-level Filter Chips (when projects exist)
+            if (availableProjects.isNotEmpty()) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        Text(
+                            text = "项目维度:",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    item {
+                        FilterChip(
+                            selected = selectedProject == null,
+                            onClick = { selectedProject = null },
+                            label = { Text("全部项目", style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                    items(availableProjects) { proj ->
+                        FilterChip(
+                            selected = selectedProject == proj,
+                            onClick = {
+                                selectedProject = if (selectedProject == proj) null else proj
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            },
+                            label = { Text(proj, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
+            }
+
             // Todo Item List
             if (filteredTodos.isEmpty()) {
                 Box(
@@ -133,7 +187,7 @@ fun TodoListScreen(viewModel: WorkLogViewModel) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "提交工作记录后，AI将自动提取后续待处理事项",
+                            text = "提交工作记录后，AI将按项目粒度自动提取后续里程碑与待办",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
@@ -152,6 +206,9 @@ fun TodoListScreen(viewModel: WorkLogViewModel) {
                             },
                             onDelete = {
                                 viewModel.deleteTodo(item.id)
+                            },
+                            onProjectClick = { proj ->
+                                selectedProject = proj
                             }
                         )
                     }
@@ -198,7 +255,8 @@ fun TodoListScreen(viewModel: WorkLogViewModel) {
 private fun TodoCardItem(
     item: TodoItemEntity,
     onToggleCompleted: (Boolean) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onProjectClick: ((String) -> Unit)? = null
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -212,7 +270,7 @@ private fun TodoCardItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Top
         ) {
             Checkbox(
                 checked = item.isCompleted,
@@ -221,39 +279,62 @@ private fun TodoCardItem(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(
                         text = item.title,
                         style = MaterialTheme.typography.bodyLarge.copy(
                             fontWeight = FontWeight.SemiBold,
                             textDecoration = if (item.isCompleted) TextDecoration.LineThrough else TextDecoration.None
                         ),
-                        color = if (item.isCompleted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                        color = if (item.isCompleted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
                     )
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
 
                     PriorityBadge(item.priority)
                 }
 
                 if (item.description.isNotBlank()) {
-                    Text(
-                        text = item.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = item.description,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
                 }
 
                 Row(
-                    modifier = Modifier.padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (item.category.isNotBlank()) {
                         SuggestionChip(
-                            onClick = {},
+                            onClick = { onProjectClick?.invoke(item.category) },
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
                             label = { Text(item.category, style = MaterialTheme.typography.labelSmall) },
-                            modifier = Modifier.height(24.dp)
+                            modifier = Modifier.height(26.dp)
                         )
                     }
                     if (item.sourceLogDate.isNotBlank()) {
@@ -306,24 +387,35 @@ private fun AddTodoDialog(
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
     var priority by remember { mutableStateOf("MEDIUM") }
-    var category by remember { mutableStateOf("工作") }
+    var category by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("手动新建待办事项") },
+        title = { Text("新建项目级待办") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
+                    value = category,
+                    onValueChange = { category = it },
+                    label = { Text("所属项目/模块 (如：支付中台、数据看板)") },
+                    placeholder = { Text("例如：用户中心微服务") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("待办事项标题") },
+                    label = { Text("待办任务标题") },
+                    placeholder = { Text("【项目名称】核心任务概述") },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
                     value = desc,
                     onValueChange = { desc = it },
-                    label = { Text("详细说明（可选）") },
+                    label = { Text("拆解执行子项 / 详细说明（可选）") },
+                    placeholder = { Text("1. 子项一；\n2. 子项二；") },
+                    minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -343,7 +435,13 @@ private fun AddTodoDialog(
             Button(
                 onClick = {
                     if (title.isNotBlank()) {
-                        onAdd(title, desc, priority, category)
+                        val finalCategory = category.trim().ifBlank { "通用项目" }
+                        val finalTitle = if (!title.startsWith("【") && finalCategory.isNotBlank()) {
+                            "【$finalCategory】$title"
+                        } else {
+                            title
+                        }
+                        onAdd(finalTitle, desc, priority, finalCategory)
                     }
                 },
                 enabled = title.isNotBlank()

@@ -185,7 +185,7 @@ class WorkLogRepository(private val context: Context) {
             )
 
             // 2. Extract Todos
-            onProgress("AI 正在自动识别待办事项...")
+            onProgress("AI 正在按项目维度提炼待办与核心里程碑...")
             val todosRes = aiRepository.extractTodos(targetDate, rawContent, settings)
             if (todosRes.isSuccess) {
                 val extractedList = todosRes.getOrDefault(emptyList())

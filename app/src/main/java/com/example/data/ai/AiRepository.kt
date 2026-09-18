@@ -227,6 +227,7 @@ class AiRepository {
 
     /**
      * AI 功能 2：从原始日记中自动提取后续待办。
+     * 关键要求：按识别到的【项目/业务模块】粒度进行归纳整合，避免任务切分过碎。
      */
     suspend fun extractTodos(
         date: String,
@@ -241,22 +242,33 @@ class AiRepository {
             $cleanNotes
             </user_raw_content>
 
-            请分析内容中明确提及或强烈暗示的“后续需要跟进”、“待修复BUG”、“明天要做”、“待沟通事项”等未来待办任务。
+            【任务要求：按识别到的【项目/业务模块】粒度整理待办事项】
+            1. 严禁琐碎拆分：切勿将细小操作（如“发个邮件”、“改个参数”、“查下日志”、“找张三确认”）单独切分成多条微小待办。
+            2. 项目粒度归纳与聚合：
+               - 从笔记中识别具体的工程项目名称、系统模块或业务线（例如“支付结算中台”、“用户增长活动”、“数据看板大屏”等）。
+               - 以每个识别到的项目为单位进行整合，梳理出该项目后续的核心跟进事项或里程碑任务（每个项目通常聚合为1条核心待办；若存在多项重大交付物，单项目最多不超过2条）。
+               - 若笔记内容未提及具体项目名，请按核心技术领域或业务方向聚合（如“公共技术基建”、“团队协同协作”）。
+            3. 格式规范：
+               - title: 必须统一采用格式 `【项目名称】核心任务概括`，突出项目主体与交付目标。
+               - description: 将该项目下的具体行动子项、技术要点或沟通细节整理为清晰的序号列表（例如：“1. 排查超时重试机制；2. 与产品对齐验签规范；3. 补充单测”），确保“宏观清晰、微观详尽”。
+               - category: 必须填写识别出的【项目名称】或【模块名称】。
+               - priority: 评估该项目待办的紧迫程度（HIGH / MEDIUM / LOW）。
+
             如果没有待办，请返回空数组 `[]`。
-            如果有待办，请按如下标准 JSON 数组格式返回（不要包含 Markdown 标记）：
+            如果有待办，请严格按如下标准 JSON 数组格式返回（不要包含 Markdown 标记）：
             [
               {
-                "title": "简短任务标题",
-                "description": "任务具体描述或上下文说明",
+                "title": "【项目名称】核心任务概括",
+                "description": "1. 具体执行子项一；2. 具体执行子项二；3. 风险与注意事项",
                 "priority": "HIGH" 或 "MEDIUM" 或 "LOW",
-                "category": "工作" 或 "学习" 或 "个人"
+                "category": "识别到的项目或模块名称"
               }
             ]
         """.trimIndent()
 
         val systemInst = """
             ${AISafetyManager.SYSTEM_GUARDRAIL_PROMPT}
-            你是一名严谨的项目管理助手，负责从工作记录中提取待办事项。不要编造任务。
+            你是一名资深技术项目经理（TPM），擅长从工程师繁杂的工作流水中，按【项目/业务模块】粒度提炼出结构化、具备里程碑价值的高层级待办事项，杜绝碎片化微观任务。
         """.trimIndent()
 
         val res = generateContent(prompt, systemInst, settings)
@@ -560,11 +572,21 @@ class AiRepository {
             val jsonArray = JSONArray(cleanJson)
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                val title = obj.optString("title", "未命名任务")
-                val desc = obj.optString("description", "")
+                val rawTitle = obj.optString("title", "未命名任务").trim()
+                val desc = obj.optString("description", "").trim()
                 val priority = obj.optString("priority", "MEDIUM").uppercase()
-                val category = obj.optString("category", "工作")
-                list.add(ExtractedTodo(title, desc, priority, category))
+                val rawCategory = obj.optString("project", "").ifBlank {
+                    obj.optString("category", "通用项目")
+                }.trim().ifBlank { "通用项目" }
+
+                // 规范化标题：确保在有明确项目名称时突出展示【项目名称】
+                val finalTitle = if (!rawTitle.startsWith("【") && rawCategory.isNotBlank() && rawCategory != "工作" && rawCategory != "Work") {
+                    "【$rawCategory】$rawTitle"
+                } else {
+                    rawTitle
+                }
+
+                list.add(ExtractedTodo(finalTitle, desc, priority, rawCategory))
             }
         } catch (e: Exception) {
             // Ignore parse errors, return empty list
