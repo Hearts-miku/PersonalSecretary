@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -60,7 +61,7 @@ fun ProfileScreen(
     val workVersions by viewModel.workVersions.collectAsState()
     val projectVersions by viewModel.projectVersions.collectAsState()
 
-    var activeTab by remember { mutableStateOf(0) } // 0 = 工作经历, 1 = 项目经历, 2 = 职业档案全貌
+    var activeTab by rememberSaveable { mutableStateOf(0) } // 0 = 工作经历, 1 = 项目经历, 2 = 职业档案全貌
     val editingProfileText by viewModel.editingProfileText.collectAsState()
     val isEditingProfile = editingProfileText != null
     
@@ -299,9 +300,15 @@ fun ProfileScreen(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Text(
+                                text = "工作经历 (work_experiences.md)",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
                             Row(
                                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -449,9 +456,15 @@ fun ProfileScreen(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Text(
+                                text = "项目经历 (project_experiences.md)",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+
                             Row(
                                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),

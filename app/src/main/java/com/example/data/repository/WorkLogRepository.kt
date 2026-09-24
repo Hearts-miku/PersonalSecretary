@@ -5,6 +5,7 @@ import com.example.data.ai.AiRepository
 import com.example.data.local.*
 import com.example.data.markdown.MarkdownFileManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
@@ -145,6 +146,7 @@ class WorkLogRepository(private val context: Context) {
         try {
             onProgress("正在读取待处理工作记录...")
             val logEntity = logDao.getLogByDate(targetDate)
+            val isInputFromSummary = logEntity?.rawNotes.isNullOrBlank() && !logEntity?.summaryMarkdown.isNullOrBlank()
             val rawContent = if (!logEntity?.rawNotes.isNullOrBlank()) {
                 logEntity!!.rawNotes
             } else if (!logEntity?.summaryMarkdown.isNullOrBlank()) {
@@ -170,19 +172,19 @@ class WorkLogRepository(private val context: Context) {
                 return@withContext Result.failure(Exception("AI 返回的总结为空，本次提炼中断。"))
             }
 
-            // Write to Type 1 MD File (worklogs/YYYY-MM-DD.md)
-            markdownManager.writeDailySummary(targetDate, summaryMarkdown)
-
-            // Update Room
-            logDao.insertOrUpdate(
-                DailyWorkLogEntity(
-                    date = targetDate,
-                    rawNotes = rawContent,
-                    summaryMarkdown = summaryMarkdown,
-                    isSummarized = true,
-                    updatedAt = System.currentTimeMillis()
+            // Write to Type 1 MD File (worklogs/YYYY-MM-DD.md) & Update Room atomically (N-22 & N-24)
+            withContext(NonCancellable) {
+                markdownManager.writeDailySummary(targetDate, summaryMarkdown)
+                logDao.insertOrUpdate(
+                    DailyWorkLogEntity(
+                        date = targetDate,
+                        rawNotes = if (isInputFromSummary) logEntity?.rawNotes.orEmpty() else rawContent,
+                        summaryMarkdown = summaryMarkdown,
+                        isSummarized = true,
+                        updatedAt = System.currentTimeMillis()
+                    )
                 )
-            )
+            }
 
             // 2. Extract Todos
             onProgress("AI 正在按项目维度提炼待办与核心里程碑...")
@@ -200,8 +202,9 @@ class WorkLogRepository(private val context: Context) {
                     )
                 }
                 if (entities.isNotEmpty()) {
-                    todoDao.deletePendingTodosForDate(targetDate)
-                    todoDao.insertTodos(entities)
+                    withContext(NonCancellable) {
+                        todoDao.replacePendingTodosForDate(targetDate, entities)
+                    }
                 }
             }
 
@@ -215,23 +218,25 @@ class WorkLogRepository(private val context: Context) {
                     onProgress("检测到新的关键技能/产出，正在更新职业履历文档...")
                     val currentProfile = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = evalObj.updatedProfileMarkdown)
                     
-                    // Save version backup
-                    versionDao.insertVersion(
-                        ExperienceVersionEntity(
-                            type = "PROFILE",
-                            content = currentProfile.markdownContent,
-                            timestamp = System.currentTimeMillis(),
-                            summaryNote = "AI 评估后自动更新"
+                    withContext(NonCancellable) {
+                        // Save version backup
+                        versionDao.insertVersion(
+                            ExperienceVersionEntity(
+                                type = "PROFILE",
+                                content = currentProfile.markdownContent,
+                                timestamp = System.currentTimeMillis(),
+                                summaryNote = "AI 评估后自动更新"
+                            )
                         )
-                    )
 
-                    markdownManager.writeCareerProfile(evalObj.updatedProfileMarkdown)
-                    profileDao.insertOrUpdateProfile(
-                        currentProfile.copy(
-                            markdownContent = evalObj.updatedProfileMarkdown,
-                            lastUpdated = System.currentTimeMillis()
+                        markdownManager.writeCareerProfile(evalObj.updatedProfileMarkdown)
+                        profileDao.insertOrUpdateProfile(
+                            currentProfile.copy(
+                                markdownContent = evalObj.updatedProfileMarkdown,
+                                lastUpdated = System.currentTimeMillis()
+                            )
                         )
-                    )
+                    }
                 } else {
                     onProgress("工作履历评估完毕（无须大幅调整履历文档）")
                 }
@@ -241,7 +246,9 @@ class WorkLogRepository(private val context: Context) {
 
             // 4. Clear Type 2 temp raw notes for target date only
             onProgress("整理完毕，正在清理临时原始输入文档...")
-            markdownManager.removeRawNotesForDate(targetDate)
+            withContext(NonCancellable) {
+                markdownManager.removeRawNotesForDate(targetDate)
+            }
 
             Result.success("【$targetDate】AI 工作日志整理完成！已更新总结、待办列表与职业文档。")
         } catch (e: Exception) {

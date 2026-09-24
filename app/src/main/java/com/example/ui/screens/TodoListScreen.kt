@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -30,9 +31,9 @@ fun TodoListScreen(viewModel: WorkLogViewModel) {
     val allTodos by viewModel.allTodos.collectAsState()
     val lastDeletedTodo by viewModel.lastDeletedTodo.collectAsState()
 
-    var selectedFilter by remember { mutableStateOf("ALL") } // ALL, PENDING, COMPLETED, HIGH
-    var selectedProject by remember { mutableStateOf<String?>(null) }
-    var showAddDialog by remember { mutableStateOf(false) }
+    var selectedFilter by rememberSaveable { mutableStateOf("ALL") } // ALL, PENDING, COMPLETED, HIGH
+    var selectedProject by rememberSaveable { mutableStateOf<String?>(null) }
+    var showAddDialog by rememberSaveable { mutableStateOf(false) }
 
     val availableProjects = remember(allTodos) {
         allTodos.map { it.category.trim() }

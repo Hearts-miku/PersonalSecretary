@@ -75,7 +75,7 @@ fun MarkdownText(
             when {
                 trimmed.startsWith("# ") -> {
                     Text(
-                        text = parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg),
+                        text = parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg, linkFg),
                         style = MaterialTheme.typography.headlineMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
@@ -85,7 +85,7 @@ fun MarkdownText(
                 }
                 trimmed.startsWith("## ") -> {
                     Text(
-                        text = parseInlineMarkdown(trimmed.substring(3), codeBg, codeFg, privacyBg, privacyFg),
+                        text = parseInlineMarkdown(trimmed.substring(3), codeBg, codeFg, privacyBg, privacyFg, linkFg),
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.secondary
@@ -95,7 +95,7 @@ fun MarkdownText(
                 }
                 trimmed.startsWith("### ") -> {
                     Text(
-                        text = parseInlineMarkdown(trimmed.substring(4), codeBg, codeFg, privacyBg, privacyFg),
+                        text = parseInlineMarkdown(trimmed.substring(4), codeBg, codeFg, privacyBg, privacyFg, linkFg),
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.tertiary
@@ -104,7 +104,7 @@ fun MarkdownText(
                     )
                 }
                 trimmed.startsWith("> ") -> {
-                    BlockQuoteView(parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg))
+                    BlockQuoteView(parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg, linkFg))
                 }
                 trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("• ") -> {
                     val content = trimmed.substring(2)
@@ -119,7 +119,7 @@ fun MarkdownText(
                             style = MaterialTheme.typography.bodyLarge
                         )
                         Text(
-                            text = parseInlineMarkdown(content, codeBg, codeFg, privacyBg, privacyFg),
+                            text = parseInlineMarkdown(content, codeBg, codeFg, privacyBg, privacyFg, linkFg),
                             style = MaterialTheme.typography.bodyMedium,
                             color = textColor
                         )
@@ -130,7 +130,7 @@ fun MarkdownText(
                 }
                 else -> {
                     Text(
-                        text = parseInlineMarkdown(line, codeBg, codeFg, privacyBg, privacyFg),
+                        text = parseInlineMarkdown(line, codeBg, codeFg, privacyBg, privacyFg, linkFg),
                         style = MaterialTheme.typography.bodyMedium,
                         color = textColor,
                         lineHeight = 22.sp
@@ -195,7 +195,7 @@ private fun parseInlineMarkdown(
     codeFg: Color,
     privacyBg: Color,
     privacyFg: Color,
-    linkFg: Color = Color(0xFF1E88E5)
+    linkFg: Color = Color.Unspecified
 ): AnnotatedString {
     return buildAnnotatedString {
         var i = 0

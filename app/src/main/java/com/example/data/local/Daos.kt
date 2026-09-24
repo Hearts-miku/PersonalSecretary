@@ -35,6 +35,14 @@ interface TodoItemDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTodos(todos: List<TodoItemEntity>)
 
+    @Transaction
+    suspend fun replacePendingTodosForDate(sourceDate: String, todos: List<TodoItemEntity>) {
+        deletePendingTodosForDate(sourceDate)
+        if (todos.isNotEmpty()) {
+            insertTodos(todos)
+        }
+    }
+
     @Query("UPDATE todo_items SET isCompleted = :isCompleted WHERE id = :id")
     suspend fun setCompleted(id: Int, isCompleted: Boolean)
 

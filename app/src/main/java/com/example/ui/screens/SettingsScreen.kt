@@ -230,7 +230,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = "数据安全说明：您配置的 API Key 和日志内容将直接发往您指定的上述 Base URL 服务端点，不会经过任何第三方中间服务器。请确保端点来自您信任的服务提供方。",
+                        text = "数据出境与隐私告知：应用内的 API 连通性测试、工作日记提炼、项目待办拆解与职业档案更新等 AI 功能，将直接向您填写的上述第三方 API Base URL 服务端点发送请求并传输相应的工作日志与配置。请知悉此数据出境行为并确保该端点来自您信任的服务提供方。本地未触发 AI 整理的数据不会上传至任何外部服务器。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(10.dp)

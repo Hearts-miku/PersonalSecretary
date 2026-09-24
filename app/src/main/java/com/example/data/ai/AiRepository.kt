@@ -1,6 +1,5 @@
 package com.example.data.ai
 
-import com.example.data.local.CryptoManager
 import com.example.data.local.DailyWorkLogEntity
 import com.example.data.local.UserSettingsEntity
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +18,46 @@ import java.util.concurrent.TimeUnit
  */
 class AiRepository {
 
+    companion object {
+        /**
+         * 规范化 OpenAI 兼容接口端点 URL（N-23）。
+         * 无论输入是带/不带尾斜杠的 baseUrl，还是已包含 chat/completions，均规范化为完整且唯一的端点。
+         */
+        fun normalizeEndpoint(baseUrl: String): String {
+            val trimmed = baseUrl.trim()
+            if (trimmed.isEmpty()) return ""
+            val withoutTrailingSlash = if (trimmed.endsWith("/")) trimmed.dropLast(1) else trimmed
+            return if (withoutTrailingSlash.endsWith("chat/completions")) {
+                withoutTrailingSlash
+            } else {
+                "$withoutTrailingSlash/chat/completions"
+            }
+        }
+
+        /**
+         * 统一校验端点配置合法性（N-28），供 ViewModel 与 AiRepository 共享调用。
+         */
+        fun validateEndpointConfig(baseUrl: String, apiKey: String, model: String): Result<Unit> {
+            val trimmedUrl = baseUrl.trim()
+            val trimmedKey = apiKey.trim()
+            val trimmedModel = model.trim()
+
+            if (trimmedUrl.isBlank()) {
+                return Result.failure(IllegalArgumentException("未配置 Base URL。请输入有效的 API Base URL。"))
+            }
+            if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+                return Result.failure(IllegalArgumentException("Base URL 必须以 http:// 或 https:// 开头。"))
+            }
+            if (trimmedKey.isBlank()) {
+                return Result.failure(IllegalArgumentException("未配置 API Key。请输入您的 API Key。"))
+            }
+            if (trimmedModel.isBlank()) {
+                return Result.failure(IllegalArgumentException("未配置模型名称。请输入有效的模型标识。"))
+            }
+            return Result.success(Unit)
+        }
+    }
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -32,9 +71,7 @@ class AiRepository {
     }
 
     private fun getEffectiveBaseUrl(settings: UserSettingsEntity?): String {
-        val url = settings?.baseUrl?.trim().orEmpty()
-        if (url.isEmpty()) return ""
-        return if (url.endsWith("/")) url else "$url/"
+        return settings?.baseUrl?.trim().orEmpty()
     }
 
     private fun getEffectiveModel(settings: UserSettingsEntity?): String {
@@ -54,23 +91,13 @@ class AiRepository {
             val baseUrl = getEffectiveBaseUrl(settings)
             val model = getEffectiveModel(settings)
 
-            if (baseUrl.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("未配置 Base URL。请在 [设置] 页面中输入有效的 API Base URL。")
-                )
-            }
-            if (apiKey.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("未配置 API Key。请在 [设置] 页面中输入您的 API Key。")
-                )
-            }
-            if (model.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalStateException("未配置模型名称。请在 [设置] 页面中输入有效的模型名称。")
-                )
+            val validation = validateEndpointConfig(baseUrl, apiKey, model)
+            if (validation.isFailure) {
+                return@withContext Result.failure(IllegalStateException(validation.exceptionOrNull()?.message ?: "配置无效"))
             }
 
-            callOpenAiApi(baseUrl, apiKey, model, prompt, systemInstruction)
+            val endpoint = normalizeEndpoint(baseUrl)
+            callOpenAiApi(endpoint, apiKey, model, prompt, systemInstruction)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -85,41 +112,16 @@ class AiRepository {
         model: String
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val trimmedUrl = baseUrl.trim()
-            val trimmedKey = apiKey.trim()
-            val trimmedModel = model.trim()
-
-            if (trimmedUrl.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalArgumentException("未配置 Base URL。请输入有效的 API Base URL。")
-                )
-            }
-            if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
-                return@withContext Result.failure(
-                    IllegalArgumentException("Base URL 必须以 http:// 或 https:// 开头。")
-                )
-            }
-            if (trimmedKey.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalArgumentException("未配置 API Key。请输入您的 API Key。")
-                )
-            }
-            if (trimmedModel.isBlank()) {
-                return@withContext Result.failure(
-                    IllegalArgumentException("未配置模型名称。请输入有效的模型标识。")
-                )
+            val validation = validateEndpointConfig(baseUrl, apiKey, model)
+            if (validation.isFailure) {
+                return@withContext Result.failure(validation.exceptionOrNull()!!)
             }
 
-            val normalizedUrl = if (trimmedUrl.endsWith("/") || trimmedUrl.endsWith("chat/completions") || trimmedUrl.endsWith("chat/completions/")) {
-                trimmedUrl
-            } else {
-                "$trimmedUrl/"
-            }
-
+            val endpoint = normalizeEndpoint(baseUrl)
             callOpenAiApi(
-                baseUrl = normalizedUrl,
-                apiKey = trimmedKey,
-                model = trimmedModel,
+                endpoint = endpoint,
+                apiKey = apiKey.trim(),
+                model = model.trim(),
                 prompt = "请回复“OK”两个字母以测试 API 连接连通性。",
                 systemInstruction = "You are a connectivity test assistant. Respond briefly with 'OK'."
             )
@@ -129,18 +131,12 @@ class AiRepository {
     }
 
     private fun callOpenAiApi(
-        baseUrl: String,
+        endpoint: String,
         apiKey: String,
         model: String,
         prompt: String,
         systemInstruction: String?
     ): Result<String> {
-        val endpoint = if (baseUrl.endsWith("chat/completions") || baseUrl.endsWith("chat/completions/")) {
-            baseUrl
-        } else {
-            "${baseUrl}chat/completions"
-        }
-
         val messages = JSONArray()
         if (!systemInstruction.isNullOrBlank()) {
             messages.put(JSONObject().apply {
@@ -575,9 +571,7 @@ class AiRepository {
                 val rawTitle = obj.optString("title", "未命名任务").trim()
                 val desc = obj.optString("description", "").trim()
                 val priority = obj.optString("priority", "MEDIUM").uppercase()
-                val rawCategory = obj.optString("project", "").ifBlank {
-                    obj.optString("category", "通用项目")
-                }.trim().ifBlank { "通用项目" }
+                val rawCategory = obj.optString("category", "通用项目").trim().ifBlank { "通用项目" }
 
                 // 规范化标题：确保在有明确项目名称时突出展示【项目名称】
                 val finalTitle = if (!rawTitle.startsWith("【") && rawCategory.isNotBlank() && rawCategory != "工作" && rawCategory != "Work") {

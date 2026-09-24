@@ -10,8 +10,7 @@
 -keep class com.example.data.local.** { *; }
 -keep class com.example.data.ai.** { *; }
 
-# Moshi / Retrofit / OkHttp
--keep class com.squareup.moshi.** { *; }
+# OkHttp / JSON
 -keepattributes Signature
 -keepattributes *Annotation*
 -dontwarn sun.misc.**
