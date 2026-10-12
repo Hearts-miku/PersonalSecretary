@@ -1,6 +1,7 @@
 package com.example.ui.navigation
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.EditNote
@@ -12,6 +13,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
     object Home : Screen("home", "主页", Icons.Default.EditNote)
     object Timeline : Screen("timeline", "时间线", Icons.Default.CalendarMonth)
+    object Report : Screen("report", "总结报告", Icons.Default.Assessment)
     object TodoList : Screen("todo", "待办", Icons.Default.FormatListNumbered)
     object Profile : Screen("profile", "个人中心", Icons.Default.Person)
     object Resume : Screen("resume", "我的简历", Icons.Default.Description)
@@ -21,6 +23,7 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
 val bottomNavScreens = listOf(
     Screen.Home,
     Screen.Timeline,
+    Screen.Report,
     Screen.TodoList,
     Screen.Profile,
     Screen.Settings

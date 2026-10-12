@@ -75,6 +75,29 @@ class MarkdownFileManager(private val context: Context) {
         return if (projectExperiencesFile.exists()) projectExperiencesFile.readText() else ""
     }
 
+    private val reportsDir: File by lazy {
+        File(baseDir, "reports").apply {
+            if (!exists()) mkdirs()
+        }
+    }
+
+    fun writeReport(filename: String, markdownContent: String) {
+        val safeName = filename.replace(Regex("""[^a-zA-Z0-9_\-\.]"""), "_")
+        val file = File(reportsDir, safeName)
+        file.writeText(markdownContent)
+    }
+
+    fun getReport(filename: String): String? {
+        val safeName = filename.replace(Regex("""[^a-zA-Z0-9_\-\.]"""), "_")
+        val file = File(reportsDir, safeName)
+        return if (file.exists()) file.readText() else null
+    }
+
+    fun listReportFiles(): List<File> {
+        return reportsDir.listFiles { _, name -> name.endsWith(".md") }
+            ?.sortedByDescending { it.lastModified() } ?: emptyList()
+    }
+
     // --- Type 2: Raw Notes Document (temp/raw_notes.md) ---
 
     fun appendRawNote(text: String, dateStr: String) {

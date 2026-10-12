@@ -73,6 +73,9 @@ fun MainScreen(viewModel: WorkLogViewModel = viewModel()) {
             composable(Screen.Timeline.route) {
                 TimelineScreen(viewModel = viewModel)
             }
+            composable(Screen.Report.route) {
+                ReportScreen(viewModel = viewModel)
+            }
             composable(Screen.TodoList.route) {
                 TodoListScreen(viewModel = viewModel)
             }

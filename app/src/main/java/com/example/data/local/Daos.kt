@@ -14,6 +14,9 @@ interface DailyWorkLogDao {
     @Query("SELECT * FROM daily_work_logs WHERE date = :date LIMIT 1")
     suspend fun getLogByDate(date: String): DailyWorkLogEntity?
 
+    @Query("SELECT * FROM daily_work_logs WHERE date >= :startDate AND date <= :endDate ORDER BY date ASC")
+    suspend fun getLogsBetweenDates(startDate: String, endDate: String): List<DailyWorkLogEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(log: DailyWorkLogEntity)
 

@@ -257,6 +257,52 @@ class WorkLogRepository(private val context: Context) {
     }
 
     // --- Page 4: Resume & Profile Generation ---
+    suspend fun generateReport(
+        startDate: String,
+        endDate: String,
+        reportType: String = "周报"
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val (actualStart, actualEnd) = if (startDate <= endDate) startDate to endDate else endDate to startDate
+        val logs = logDao.getLogsBetweenDates(actualStart, actualEnd)
+            .filter { it.summaryMarkdown.isNotBlank() || it.rawNotes.isNotBlank() }
+
+        if (logs.isEmpty()) {
+            return@withContext Result.failure(IllegalArgumentException("在【$actualStart】至【$actualEnd】区间内没有找到任何工作记录，无法生成报告。"))
+        }
+
+        val sb = StringBuilder()
+        val maxChars = 25000
+        var currentChars = 0
+
+        for (log in logs) {
+            val content = when {
+                log.summaryMarkdown.isNotBlank() -> log.summaryMarkdown
+                else -> log.rawNotes
+            }
+            val entry = "### 日期: ${log.date}\n$content\n"
+            if (currentChars + entry.length > maxChars) {
+                sb.append("...[超出上下文长度上限，已选取前序主要日志进行总结]\n")
+                break
+            }
+            sb.append(entry).append("\n")
+            currentChars += entry.length
+        }
+
+        val settings = getSettings()
+        aiRepository.generatePeriodicReport(actualStart, actualEnd, reportType, sb.toString(), settings)
+    }
+
+    suspend fun saveReport(filename: String, content: String) = withContext(Dispatchers.IO) {
+        markdownManager.writeReport(filename, content)
+    }
+
+    suspend fun getSavedReports(): List<java.io.File> = withContext(Dispatchers.IO) {
+        markdownManager.listReportFiles()
+    }
+
+    suspend fun getReportContent(filename: String): String? = withContext(Dispatchers.IO) {
+        markdownManager.getReport(filename)
+    }
 
     suspend fun generateResume(templateStyle: String): Result<String> = withContext(Dispatchers.IO) {
         val profileMd = markdownManager.getCareerProfileContent()

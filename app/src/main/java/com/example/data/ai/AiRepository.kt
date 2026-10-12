@@ -657,6 +657,47 @@ class AiRepository {
         return if (end != -1) clean.substring(start, end + 1) else clean
     }
 
+    /**
+     * AI 功能：基于特定日期区间的日常记录提炼总结报告。
+     * 支持周报、月报、季度总结或自定义周期。
+     */
+    suspend fun generatePeriodicReport(
+        startDate: String,
+        endDate: String,
+        reportType: String, // "周报", "月报", "项目报告", "自定义周期总结"
+        logsContext: String,
+        settings: UserSettingsEntity? = null
+    ): Result<String> {
+        val cleanLogs = AISafetyManager.sanitizeUserInput(logsContext)
+        val prompt = """
+            报告时间区间: $startDate 至 $endDate
+            报告类型: $reportType
+            
+            以下是用户在该时间区间内记录的日常工作日志总结与笔记：
+            <user_work_records>
+            $cleanLogs
+            </user_work_records>
+
+            请基于上述时间段内的全部工作记录，提炼并生成一份结构严谨、数据详实、适合向上级或团队汇报的专业工作总结报告（Markdown格式）。
+            
+            要求如下：
+            1. 【报告标题】：生成形如 `# 《工作总结报告 ($startDate ~ $endDate)》` 的清晰主标题。
+            2. 【周期工作概览与执行摘要】：用精炼书面的语言概述此期间的核心业务推进脉络与整体工作节奏。
+            3. 【关键业务/项目成果与进展里程碑】：按重点项目或关键业务模块归纳，详细说明在此期间推进完成的重点任务、交付产物与核心指标改善。
+            4. 【攻坚难点、技术突破与问题复盘】：总结在此期间遇到的关键阻碍、技术方案攻关及最终解决对策，并提炼宝贵经验。
+            5. 【团队协同与支持事项】：涉及跨部门协同、联调合作或协助团队的成果。
+            6. 【下阶段工作规划与跟进事项】：基于当前进度推演接下来的工作重心与待跟进任务。
+            7. 排版规范：严格使用多级标题、清晰列表与加粗重点，直接返回排版优雅完整的 Markdown 文本，杜绝模棱两可的空话与虚构数据。
+        """.trimIndent()
+
+        val systemInst = """
+            ${AISafetyManager.SYSTEM_GUARDRAIL_PROMPT}
+            你是一名资深团队管理专家与技术总监，擅长将工程师或员工日常碎片化工作日志按周期提炼整合为条理分明、重点突出、极具汇报价值的高质量周期总结报告。
+        """.trimIndent()
+
+        return generateContent(prompt, systemInst, settings)
+    }
+
     private fun parseErrorMessage(errorBody: String, statusCode: Int): String {
         try {
             val json = JSONObject(errorBody)

@@ -64,6 +64,25 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     private val _lastDeletedTodo = MutableStateFlow<TodoItemEntity?>(null)
     val lastDeletedTodo: StateFlow<TodoItemEntity?> = _lastDeletedTodo.asStateFlow()
 
+    // Report Generation States
+    private val _reportStartDate = MutableStateFlow(repository.getYesterdayString())
+    val reportStartDate: StateFlow<String> = _reportStartDate.asStateFlow()
+
+    private val _reportEndDate = MutableStateFlow(repository.getTodayString())
+    val reportEndDate: StateFlow<String> = _reportEndDate.asStateFlow()
+
+    private val _reportType = MutableStateFlow("周报")
+    val reportType: StateFlow<String> = _reportType.asStateFlow()
+
+    private val _generatedReportMarkdown = MutableStateFlow("")
+    val generatedReportMarkdown: StateFlow<String> = _generatedReportMarkdown.asStateFlow()
+
+    private val _isGeneratingReport = MutableStateFlow(false)
+    val isGeneratingReport: StateFlow<Boolean> = _isGeneratingReport.asStateFlow()
+
+    private val _savedReportFiles = MutableStateFlow<List<java.io.File>>(emptyList())
+    val savedReportFiles: StateFlow<List<java.io.File>> = _savedReportFiles.asStateFlow()
+
     fun cancelActiveAiJob() {
         activeAiJob?.cancel()
         activeAiJob = null
@@ -71,6 +90,7 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         _isGeneratingResume.value = false
         _isGeneratingWorkExp.value = false
         _isGeneratingProjectExp.value = false
+        _isGeneratingReport.value = false
         _isImportingFile.value = false
         _isSearchingLogs.value = false
         _isTestingConnection.value = false
@@ -278,12 +298,96 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
             if (savedStyle.isNotBlank()) {
                 _selectedResumeStyle.value = savedStyle
             }
+            loadSavedReports()
         }
     }
 
     fun setSelectedResumeStyle(style: String) {
         _selectedResumeStyle.value = style
         repository.saveResumeStyle(style)
+    }
+
+    // --- Report Actions ---
+
+    fun setReportStartDate(date: String) {
+        _reportStartDate.value = date
+    }
+
+    fun setReportEndDate(date: String) {
+        _reportEndDate.value = date
+    }
+
+    fun setReportType(type: String) {
+        _reportType.value = type
+    }
+
+    fun loadSavedReports() {
+        viewModelScope.launch {
+            _savedReportFiles.value = repository.getSavedReports()
+        }
+    }
+
+    fun selectSavedReport(file: java.io.File) {
+        viewModelScope.launch {
+            val content = repository.getReportContent(file.name)
+            if (content != null) {
+                _generatedReportMarkdown.value = content
+                showSnack("已载入报告【${file.nameWithoutExtension}】")
+            }
+        }
+    }
+
+    fun updateGeneratedReportMarkdown(content: String) {
+        _generatedReportMarkdown.value = content
+    }
+
+    fun saveCurrentReport(customTitle: String? = null) {
+        val content = _generatedReportMarkdown.value
+        if (content.isBlank()) {
+            showSnack("报告内容为空，无法保存")
+            return
+        }
+        viewModelScope.launch {
+            val title = customTitle?.ifBlank { null }
+                ?: "${_reportStartDate.value}_至_${_reportEndDate.value}_${_reportType.value}"
+            val filename = "${title}.md"
+            repository.saveReport(filename, content)
+            loadSavedReports()
+            showSnack("报告已保存为 $filename")
+        }
+    }
+
+    fun generateReport(
+        startDate: String = _reportStartDate.value,
+        endDate: String = _reportEndDate.value,
+        reportType: String = _reportType.value
+    ) {
+        val (actualStart, actualEnd) = if (startDate <= endDate) startDate to endDate else endDate to startDate
+        _reportStartDate.value = actualStart
+        _reportEndDate.value = actualEnd
+        _reportType.value = reportType
+
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
+            _isGeneratingReport.value = true
+            _aiStatusMessage.value = "正在基于【$actualStart ~ $actualEnd】的工作记录提炼《$reportType》..."
+            try {
+                val res = repository.generateReport(actualStart, actualEnd, reportType)
+                if (res.isSuccess) {
+                    val reportContent = res.getOrDefault("")
+                    _generatedReportMarkdown.value = reportContent
+                    // Auto save the generated report
+                    val filename = "${actualStart}_至_${actualEnd}_${reportType}.md"
+                    repository.saveReport(filename, reportContent)
+                    loadSavedReports()
+                    showSnack("周期工作报告已生成并自动保存！")
+                } else {
+                    showSnack("报告生成失败: ${res.exceptionOrNull()?.message}")
+                }
+            } finally {
+                _isGeneratingReport.value = false
+            }
+        }
     }
 
     fun generateResume(style: String = _selectedResumeStyle.value) {
