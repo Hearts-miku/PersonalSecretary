@@ -131,12 +131,6 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     )
                 }
 
-                Text(
-                    text = "根据偏好选择简约白色 (浅色) 主题、极简黑色 (深色) 主题或跟随系统设置。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -160,7 +154,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
             }
         }
 
-        // 卡片 2: 自定义 API 配置 (只保留自定义 API)
+        // 卡片 2: 自定义 API 配置
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -184,12 +178,6 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-
-                Text(
-                    text = "本应用采用标准兼容协议与您指定的自定义模型服务进行通信。请配置您的 API Key 与服务端点 Base URL。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
 
                 // API Key 输入框
                 OutlinedTextField(
@@ -215,7 +203,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     modifier = Modifier.fillMaxWidth().testTag("settings_model_input")
                 )
 
-                // Base URL 输入框 (P1-17)
+                // Base URL 输入框
                 OutlinedTextField(
                     value = baseUrlText,
                     onValueChange = { baseUrlText = it },
@@ -223,19 +211,6 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                     placeholder = { Text("https://api.your-provider.com/v1/") },
                     modifier = Modifier.fillMaxWidth().testTag("settings_base_url_input")
                 )
-
-                // 隐私与数据安全说明 (P2-20)
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = "数据出境与隐私告知：应用内的 API 连通性测试、工作日记提炼、项目待办拆解与职业档案更新等 AI 功能，将直接向您填写的上述第三方 API Base URL 服务端点发送请求并传输相应的工作日志与配置。请知悉此数据出境行为并确保该端点来自您信任的服务提供方。本地未触发 AI 整理的数据不会上传至任何外部服务器。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(10.dp)
-                    )
-                }
 
                 // 连接测试结果横幅
                 connectionTestResult?.let { testResult ->
@@ -339,7 +314,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                             .weight(1f)
                             .testTag("save_api_settings_button")
                     ) {
-                        Text("保存 API 配置", style = MaterialTheme.typography.labelMedium)
+                        Text("保存配置", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -369,23 +344,12 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "定时任务管理",
+                            text = "定时整理任务",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.secondary
                         )
                     }
-
-                    Switch(
-                        checked = false,
-                        onCheckedChange = { },
-                        enabled = false
-                    )
                 }
-                Text(
-                    text = "系统级定时任务（如利用系统后台调度在每日固定时间自动整理工作日志）可在后续版本灵活接入。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
 
                 Button(
                     onClick = { viewModel.triggerManualScheduledTask() },
@@ -418,7 +382,7 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
             }
         }
 
-        // 卡片 4: 后台 Markdown 存储状态
+        // 卡片 4: 本地 Markdown 文档状态
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -453,45 +417,14 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text("1. 每日工作总结文档目录 (worklogs/): ${mdInfo["worklogs_count"] ?: "0"}", style = MaterialTheme.typography.bodySmall)
-                    Text("2. 临时原始记录文档 (temp/raw_notes.md): ${mdInfo["raw_notes.md"] ?: "0 bytes"}", style = MaterialTheme.typography.bodySmall)
-                    Text("3. 用户职业履历文档 (user/career_profile.md): ${mdInfo["career_profile.md"] ?: "0 bytes"}", style = MaterialTheme.typography.bodySmall)
+                    Text("每日工作总结文档 (worklogs/): ${mdInfo["worklogs_count"] ?: "0"}", style = MaterialTheme.typography.bodySmall)
+                    Text("临时原始记录 (temp/raw_notes.md): ${mdInfo["raw_notes.md"] ?: "0 bytes"}", style = MaterialTheme.typography.bodySmall)
+                    Text("用户职业履历 (user/career_profile.md): ${mdInfo["career_profile.md"] ?: "0 bytes"}", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
 
-        // 卡片 5: 安全与规范防线
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Security,
-                        contentDescription = "安全与约束",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "AI 安全规范与提示词防护",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Text(
-                    text = "• 严防提示词注入：所有用户输入文本均使用专属 XML 标签进行严格沙箱隔离。\n• 严防事实幻觉：强制仅根据用户真实工作记录提炼，严禁捏造虚假经历。\n• 隐私脱敏保障：简历与履历生成强制采用标准通用占位符脱敏。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // 卡片 6: 数据管理 (导出 ZIP & 清空数据)
+        // 卡片 5: 数据管理 (导出 ZIP & 清空数据)
         var showClearDataDialog by remember { mutableStateOf(false) }
 
         Card(
@@ -505,13 +438,8 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "数据备份与导出",
+                    text = "数据备份与重置",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
-                Text(
-                    text = "将所有工作日志、履历档案和生成的 Markdown 文件打包为 ZIP 归档，方便离线备份与迁移。\n隐私提示：导出的备份文件包含您的原始工作记录与文档明文，请妥善保管该文件，切勿发送给不可信的第三方。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 OutlinedButton(
@@ -528,24 +456,6 @@ fun SettingsScreen(viewModel: WorkLogViewModel) {
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteForever,
-                        contentDescription = "数据管理",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "数据清理与重置",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-                Text(
-                    text = "清空所有工作日志、履历档案和本地文档。该操作不可逆，请谨慎操作。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
                 Button(
                     onClick = { showClearDataDialog = true },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
