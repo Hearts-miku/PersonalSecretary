@@ -9,12 +9,19 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicLong
 
-class WorkLogRepository(private val context: Context) {
+class WorkLogRepository(
+    private val context: Context,
+    val aiRepository: AiRepository = AiRepository()
+) {
 
     private val db = AppDatabase.getInstance(context)
     private val logDao = db.dailyWorkLogDao()
@@ -24,7 +31,10 @@ class WorkLogRepository(private val context: Context) {
     private val versionDao = db.experienceVersionDao()
 
     val markdownManager = MarkdownFileManager(context)
-    val aiRepository = AiRepository()
+
+    // Concurrency and write epoch fences (N-36, N-37)
+    private val repositoryMutex = Mutex()
+    private val dataEpoch = AtomicLong(0L)
 
     // Flows for UI
     val allLogsFlow: Flow<List<DailyWorkLogEntity>> = logDao.getAllLogs()
@@ -116,25 +126,27 @@ class WorkLogRepository(private val context: Context) {
     suspend fun addRawNote(input: String, dateStr: String = getTodayString()) = withContext(Dispatchers.IO) {
         if (input.isBlank()) return@withContext
 
-        // 1. Write to Type 2 Markdown File (temp/raw_notes.md)
+        // 1. Write to Type 2 Markdown File (temp/raw_notes.md) - thread-safe in MarkdownFileManager
         markdownManager.appendRawNote(input, dateStr)
 
-        // 2. Update or insert in Room DB
-        val existing = logDao.getLogByDate(dateStr)
-        val newRaw = if (existing != null && existing.rawNotes.isNotBlank()) {
-            "${existing.rawNotes}\n• $input"
-        } else {
-            "• $input"
-        }
+        // 2. Atomically update Room DB under repositoryMutex
+        repositoryMutex.withLock {
+            val existing = logDao.getLogByDate(dateStr)
+            val newRaw = if (existing != null && existing.rawNotes.isNotBlank()) {
+                "${existing.rawNotes}\n• $input"
+            } else {
+                "• $input"
+            }
 
-        val updatedEntity = DailyWorkLogEntity(
-            date = dateStr,
-            rawNotes = newRaw,
-            summaryMarkdown = existing?.summaryMarkdown ?: "",
-            isSummarized = false,
-            updatedAt = System.currentTimeMillis()
-        )
-        logDao.insertOrUpdate(updatedEntity)
+            val updatedEntity = DailyWorkLogEntity(
+                date = dateStr,
+                rawNotes = newRaw,
+                summaryMarkdown = existing?.summaryMarkdown ?: "",
+                isSummarized = false,
+                updatedAt = System.currentTimeMillis()
+            )
+            logDao.insertOrUpdate(updatedEntity)
+        }
     }
 
     // --- AI Consolidation Engine (Manual or Scheduled) ---
@@ -144,10 +156,14 @@ class WorkLogRepository(private val context: Context) {
         onProgress: (String) -> Unit = {}
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
+            val startEpoch = dataEpoch.get()
             onProgress("正在读取待处理工作记录...")
             val logEntity = logDao.getLogByDate(targetDate)
             val isInputFromSummary = logEntity?.rawNotes.isNullOrBlank() && !logEntity?.summaryMarkdown.isNullOrBlank()
-            val rawContent = if (!logEntity?.rawNotes.isNullOrBlank()) {
+            val rawContent = if (!logEntity?.summaryMarkdown.isNullOrBlank() && !logEntity?.rawNotes.isNullOrBlank() && !logEntity!!.rawNotes.contains(logEntity!!.summaryMarkdown)) {
+                // If previous summary exists and new raw notes are recorded, provide both so AI produces a complete unified daily summary (N-39)
+                "【今日已有总结】：\n${logEntity!!.summaryMarkdown}\n\n【补充输入笔记】：\n${logEntity!!.rawNotes}"
+            } else if (!logEntity?.rawNotes.isNullOrBlank()) {
                 logEntity!!.rawNotes
             } else if (!logEntity?.summaryMarkdown.isNullOrBlank()) {
                 logEntity!!.summaryMarkdown
@@ -159,6 +175,7 @@ class WorkLogRepository(private val context: Context) {
                 return@withContext Result.failure(Exception("【$targetDate】没有待整理的原始输入数据"))
             }
 
+            val snapshotRawNotes = logEntity?.rawNotes.orEmpty()
             val settings = getSettings()
 
             // 1. AI Summarize Daily Work
@@ -172,38 +189,41 @@ class WorkLogRepository(private val context: Context) {
                 return@withContext Result.failure(Exception("AI 返回的总结为空，本次提炼中断。"))
             }
 
-            // Write to Type 1 MD File (worklogs/YYYY-MM-DD.md) & Update Room with version coordination (N-37)
+            // Write to Type 1 MD File (worklogs/YYYY-MM-DD.md) & Update Room with epoch validation (N-36, N-37, N-39)
             var hasConcurrentNotes = false
             withContext(NonCancellable) {
-                markdownManager.writeDailySummary(targetDate, summaryMarkdown)
-                
-                // N-37: Check if concurrent notes were added to Room while waiting for AI response
-                val currentEntity = logDao.getLogByDate(targetDate)
-                val currentRaw = currentEntity?.rawNotes.orEmpty()
-                hasConcurrentNotes = currentRaw.isNotBlank() && currentRaw != rawContent
-
-                val remainingRaw = if (hasConcurrentNotes) {
-                    if (currentRaw.startsWith(rawContent)) {
-                        currentRaw.substring(rawContent.length).trim().removePrefix("•").trim()
-                    } else {
-                        currentRaw
+                repositoryMutex.withLock {
+                    if (dataEpoch.get() != startEpoch) {
+                        return@withContext
                     }
-                } else {
-                    if (isInputFromSummary) logEntity?.rawNotes.orEmpty() else ""
-                }
+                    markdownManager.writeDailySummary(targetDate, summaryMarkdown)
+                    
+                    // N-37: Check if concurrent notes were added to Room while waiting for AI response
+                    val currentEntity = logDao.getLogByDate(targetDate)
+                    val currentRaw = currentEntity?.rawNotes.orEmpty()
+                    hasConcurrentNotes = currentRaw.isNotBlank() && currentRaw != snapshotRawNotes
 
-                logDao.insertOrUpdate(
-                    DailyWorkLogEntity(
-                        date = targetDate,
-                        rawNotes = remainingRaw,
-                        summaryMarkdown = summaryMarkdown,
-                        isSummarized = !hasConcurrentNotes,
-                        updatedAt = System.currentTimeMillis()
+                    // N-39: NEVER wipe rawNotes! Preserve user's raw notes permanently.
+                    // If concurrent notes were added, isSummarized = false so pending additions can be summarized.
+                    val finalRawNotes = if (currentRaw.isNotBlank()) currentRaw else snapshotRawNotes
+
+                    logDao.insertOrUpdate(
+                        DailyWorkLogEntity(
+                            date = targetDate,
+                            rawNotes = finalRawNotes,
+                            summaryMarkdown = summaryMarkdown,
+                            isSummarized = !hasConcurrentNotes,
+                            updatedAt = System.currentTimeMillis()
+                        )
                     )
-                )
+                }
             }
 
-            // 2. Extract Todos
+            if (dataEpoch.get() != startEpoch) {
+                return@withContext Result.failure(CancellationException("数据已清空，任务中止"))
+            }
+
+            // 2. Extract Todos (merge with existing pending todos so notes from A are not lost when B is summarized, N-39)
             onProgress("AI 正在按项目维度提炼待办与核心里程碑...")
             val todosRes = aiRepository.extractTodos(targetDate, rawContent, settings)
             if (todosRes.isSuccess) {
@@ -220,9 +240,17 @@ class WorkLogRepository(private val context: Context) {
                 }
                 if (entities.isNotEmpty()) {
                     withContext(NonCancellable) {
-                        todoDao.replacePendingTodosForDate(targetDate, entities)
+                        repositoryMutex.withLock {
+                            if (dataEpoch.get() == startEpoch) {
+                                todoDao.mergeTodosForDate(targetDate, entities)
+                            }
+                        }
                     }
                 }
+            }
+
+            if (dataEpoch.get() != startEpoch) {
+                return@withContext Result.failure(CancellationException("数据已清空，任务中止"))
             }
 
             // 3. AI Evaluate Career Profile Update
@@ -236,23 +264,27 @@ class WorkLogRepository(private val context: Context) {
                     val currentProfile = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = evalObj.updatedProfileMarkdown)
                     
                     withContext(NonCancellable) {
-                        // Save version backup
-                        versionDao.insertVersion(
-                            ExperienceVersionEntity(
-                                type = "PROFILE",
-                                content = currentProfile.markdownContent,
-                                timestamp = System.currentTimeMillis(),
-                                summaryNote = "AI 评估后自动更新"
-                            )
-                        )
+                        repositoryMutex.withLock {
+                            if (dataEpoch.get() == startEpoch) {
+                                // Save version backup
+                                versionDao.insertVersion(
+                                    ExperienceVersionEntity(
+                                        type = "PROFILE",
+                                        content = currentProfile.markdownContent,
+                                        timestamp = System.currentTimeMillis(),
+                                        summaryNote = "AI 评估后自动更新"
+                                    )
+                                )
 
-                        markdownManager.writeCareerProfile(evalObj.updatedProfileMarkdown)
-                        profileDao.insertOrUpdateProfile(
-                            currentProfile.copy(
-                                markdownContent = evalObj.updatedProfileMarkdown,
-                                lastUpdated = System.currentTimeMillis()
-                            )
-                        )
+                                markdownManager.writeCareerProfile(evalObj.updatedProfileMarkdown)
+                                profileDao.insertOrUpdateProfile(
+                                    currentProfile.copy(
+                                        markdownContent = evalObj.updatedProfileMarkdown,
+                                        lastUpdated = System.currentTimeMillis()
+                                    )
+                                )
+                            }
+                        }
                     }
                 } else {
                     onProgress("工作履历评估完毕（无须大幅调整履历文档）")
@@ -264,10 +296,14 @@ class WorkLogRepository(private val context: Context) {
             // 4. Clear Type 2 temp raw notes for target date (preserving newly added notes if concurrent, N-37)
             onProgress("整理完毕，正在清理临时原始输入文档...")
             withContext(NonCancellable) {
-                if (hasConcurrentNotes) {
-                    markdownManager.removeRawNotesForDate(targetDate, rawContent)
-                } else {
-                    markdownManager.removeRawNotesForDate(targetDate)
+                repositoryMutex.withLock {
+                    if (dataEpoch.get() == startEpoch) {
+                        if (snapshotRawNotes.isNotBlank()) {
+                            markdownManager.removeRawNotesForDate(targetDate, snapshotRawNotes)
+                        } else if (!hasConcurrentNotes) {
+                            markdownManager.removeRawNotesForDate(targetDate)
+                        }
+                    }
                 }
             }
 
@@ -295,44 +331,75 @@ class WorkLogRepository(private val context: Context) {
         val maxChars = 25000
         var currentChars = 0
         var hasFactContent = false
+        val includedDates = mutableListOf<String>()
+        var isAnyEntryTruncated = false
+
+        // N-32: Dynamic fair budget allocation per entry based on number of logs
+        val maxPerEntry = (maxChars / logs.size).coerceIn(1200, 5000)
 
         for (log in logs) {
-            // N-31: If entry has summary and supplementary unsummarized raw notes, include both!
-            val rawContent = when {
-                log.isSummarized && log.summaryMarkdown.isNotBlank() && log.rawNotes.isBlank() -> log.summaryMarkdown
-                log.summaryMarkdown.isNotBlank() && log.rawNotes.isNotBlank() -> {
-                    "${log.summaryMarkdown}\n\n#### 【当日补录待整理记录】\n${log.rawNotes}"
+            // N-31 & N-32: Allocate budget to both summary and supplementary notes
+            val summaryText = log.summaryMarkdown.trim()
+            val rawNotesText = log.rawNotes.trim()
+
+            val entryBody = when {
+                summaryText.isNotBlank() && rawNotesText.isNotBlank() -> {
+                    // Divide budget fairly between summary and supplementary unsummarized notes (2:1 ratio)
+                    val summaryBudget = (maxPerEntry * 2) / 3
+                    val rawBudget = maxPerEntry - summaryBudget
+                    val sPart = if (summaryText.length > summaryBudget) {
+                        isAnyEntryTruncated = true
+                        summaryText.take(summaryBudget) + "..."
+                    } else summaryText
+                    val rPart = if (rawNotesText.length > rawBudget) {
+                        isAnyEntryTruncated = true
+                        rawNotesText.take(rawBudget) + "..."
+                    } else rawNotesText
+                    "$sPart\n\n#### 【当日补录待整理记录】\n$rPart"
                 }
-                log.summaryMarkdown.isNotBlank() -> log.summaryMarkdown
-                else -> log.rawNotes
+                summaryText.isNotBlank() -> {
+                    if (summaryText.length > maxPerEntry) {
+                        isAnyEntryTruncated = true
+                        summaryText.take(maxPerEntry) + "..."
+                    } else summaryText
+                }
+                else -> {
+                    if (rawNotesText.length > maxPerEntry) {
+                        isAnyEntryTruncated = true
+                        rawNotesText.take(maxPerEntry) + "..."
+                    } else rawNotesText
+                }
             }
 
-            if (rawContent.isBlank()) continue
+            if (entryBody.isBlank()) continue
 
-            // N-32: Truncate oversized single entries so one huge entry does not crowd out subsequent entries
-            val maxPerEntry = 5000
-            val truncated = if (rawContent.length > maxPerEntry) {
-                rawContent.take(maxPerEntry) + "\n...[单篇内容较长，已截取前${maxPerEntry}字]"
-            } else {
-                rawContent
-            }
-
-            val entry = "### 日期: ${log.date}\n$truncated\n"
+            val entry = "### 日期: ${log.date}\n$entryBody\n\n"
             if (currentChars + entry.length > maxChars) {
-                sb.append("...[超出上下文长度上限，已选取前序主要日志进行总结]\n")
+                isAnyEntryTruncated = true
                 break
             }
-            sb.append(entry).append("\n")
+            sb.append(entry)
             currentChars += entry.length
             hasFactContent = true
+            includedDates.add(log.date)
         }
 
         if (!hasFactContent || sb.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("在选定区间内未提取到有效事实工作记录，无法生成报告。"))
         }
 
+        // N-32: Explicit coverage notice
+        val coverageHeader = if (includedDates.size < logs.size) {
+            "【覆盖范围提示：受篇幅限制，本报告实际覆盖日期为 ${includedDates.first()} 至 ${includedDates.last()}，共 ${includedDates.size}/${logs.size} 天记录】\n\n"
+        } else if (isAnyEntryTruncated) {
+            "【覆盖范围提示：本报告覆盖区间内全部 ${logs.size} 天工作记录（部分长篇日志已精简提炼核心要点）】\n\n"
+        } else {
+            "【覆盖范围提示：本报告完整覆盖区间内全部 ${logs.size} 天工作记录】\n\n"
+        }
+
+        val fullInputContext = coverageHeader + sb.toString()
         val settings = getSettings()
-        aiRepository.generatePeriodicReport(actualStart, actualEnd, reportType, sb.toString(), settings)
+        aiRepository.generatePeriodicReport(actualStart, actualEnd, reportType, fullInputContext, settings)
     }
 
     suspend fun saveReport(filename: String, content: String) = withContext(Dispatchers.IO) {
@@ -732,13 +799,16 @@ class WorkLogRepository(private val context: Context) {
     }
 
     suspend fun clearAllData() = withContext(Dispatchers.IO) {
-        // Clear DB
-        logDao.deleteAllLogs()
-        todoDao.deleteAllTodos()
-        profileDao.deleteAllProfiles()
-        versionDao.deleteAllVersions()
+        repositoryMutex.withLock {
+            dataEpoch.incrementAndGet()
+            // Clear DB
+            logDao.deleteAllLogs()
+            todoDao.deleteAllTodos()
+            profileDao.deleteAllProfiles()
+            versionDao.deleteAllVersions()
 
-        // Clear files
-        markdownManager.clearAllData()
+            // Clear files
+            markdownManager.clearAllData()
+        }
     }
 }

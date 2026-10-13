@@ -119,4 +119,38 @@ class MarkdownFileManagerAuditTest {
         assertFalse("Summarized note A must be removed", updatedRaw.contains(noteA))
         assertTrue("Concurrent note B must be preserved", updatedRaw.contains(noteB))
     }
+
+    /**
+     * N-37: Verify that substring notes are not erroneously deleted when a superstring note is removed.
+     * Specifically: appending 'deploy module A' then 'module A', and removing '• deploy module A',
+     * must preserve 'module A'.
+     */
+    @Test
+    fun testN37_substringNoteIsPreservedWhenSuperstringIsRemoved() {
+        val date = "2026-10-06"
+        manager.appendRawNote("deploy module A", date)
+        manager.appendRawNote("module A", date)
+
+        manager.removeRawNotesForDate(date, "• deploy module A")
+
+        val raw = manager.getRawNotesContent()
+        assertFalse("deploy module A must be removed", raw.contains("deploy module A"))
+        assertTrue("module A must be preserved", raw.contains("module A"))
+    }
+
+    /**
+     * N-37: Verify duplicate note handling. Removing 1 occurrence of an identical note
+     * must preserve the 2nd occurrence.
+     */
+    @Test
+    fun testN37_duplicateNoteIsPreservedWhenOneOccurrenceRemoved() {
+        val date = "2026-10-07"
+        manager.appendRawNote("fixed bug 123", date)
+        manager.appendRawNote("fixed bug 123", date)
+
+        manager.removeRawNotesForDate(date, "fixed bug 123")
+
+        val raw = manager.getRawNotesContent()
+        assertTrue("Second occurrence of identical note must be preserved", raw.contains("fixed bug 123"))
+    }
 }

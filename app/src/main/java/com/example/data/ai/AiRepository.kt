@@ -22,7 +22,7 @@ import kotlin.coroutines.resumeWithException
  * 统一的 AI 模型调用与提示词处理仓库。
  * 基于标准 OpenAI 兼容接口协议，支持各类自定义模型端点。
  */
-class AiRepository {
+open class AiRepository {
 
     companion object {
         /**
@@ -219,7 +219,7 @@ class AiRepository {
     /**
      * AI 功能 1：将用户工作碎记整理为结构化 Markdown 总结。
      */
-    suspend fun summarizeDailyNotes(
+    open suspend fun summarizeDailyNotes(
         date: String,
         rawNotes: String,
         settings: UserSettingsEntity? = null
@@ -252,7 +252,7 @@ class AiRepository {
      * AI 功能 2：从原始日记中自动提取后续待办。
      * 关键要求：按识别到的【项目/业务模块】粒度进行归纳整合，避免任务切分过碎。
      */
-    suspend fun extractTodos(
+    open suspend fun extractTodos(
         date: String,
         rawNotes: String,
         settings: UserSettingsEntity? = null
@@ -303,7 +303,7 @@ class AiRepository {
     /**
      * AI 功能 3：基于今日工作总结评估并增量更新职业档案。
      */
-    suspend fun evaluateCareerProfileUpdate(
+    open suspend fun evaluateCareerProfileUpdate(
         currentProfileMarkdown: String,
         todaySummaryMarkdown: String,
         settings: UserSettingsEntity? = null
@@ -680,7 +680,7 @@ class AiRepository {
      * AI 功能：基于特定日期区间的日常记录提炼总结报告。
      * 支持周报、月报、季度总结或自定义周期。
      */
-    suspend fun generatePeriodicReport(
+    open suspend fun generatePeriodicReport(
         startDate: String,
         endDate: String,
         reportType: String, // "周报", "月报", "项目报告", "自定义周期总结"

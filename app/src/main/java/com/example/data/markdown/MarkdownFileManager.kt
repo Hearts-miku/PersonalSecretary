@@ -114,44 +114,69 @@ class MarkdownFileManager(private val context: Context) {
             ?.sortedByDescending { it.lastModified() } ?: emptyList()
     }
 
+    private val rawNotesLock = Any()
+
     // --- Type 2: Raw Notes Document (temp/raw_notes.md) ---
 
-    fun appendRawNote(text: String, dateStr: String) {
+    fun appendRawNote(text: String, dateStr: String) = synchronized(rawNotesLock) {
         val file = rawNotesFile
         file.parentFile?.mkdirs()
         val entry = "\n\n### [$dateStr] 原始输入\n$text\n"
         file.appendText(entry)
     }
 
-    fun getRawNotesContent(): String {
+    fun getRawNotesContent(): String = synchronized(rawNotesLock) {
         val file = rawNotesFile
-        return if (file.exists()) file.readText() else ""
+        if (file.exists()) file.readText() else ""
     }
 
     /**
      * Removes raw notes for a date.
      * If [specificContentToRemove] is provided (e.g. from a specific summary snapshot),
-     * only entries matching that content are removed, preserving any concurrently added notes (N-37).
+     * only entries exactly matching those target items are removed, preserving any concurrently added
+     * notes, substring variations (e.g. 'deploy module A' vs 'module A'), and unsummarized entries (N-37).
      */
-    fun removeRawNotesForDate(dateStr: String, specificContentToRemove: String? = null) {
+    fun removeRawNotesForDate(dateStr: String, specificContentToRemove: String? = null) = synchronized(rawNotesLock) {
         val file = rawNotesFile
-        if (!file.exists()) return
+        if (!file.exists()) return@synchronized
         val text = file.readText()
         val tag = "### [$dateStr] 原始输入"
-        if (!text.contains(tag)) return
+        if (!text.contains(tag)) return@synchronized
 
         val blocks = text.split("\n\n### [")
         val header = blocks.firstOrNull() ?: "# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n"
+
+        // Prepare list of exact normalized items to remove (supports multiple lines and frequency consumption)
+        val targetsToRemove: MutableList<String>? = specificContentToRemove?.let { content ->
+            content.lines()
+                .map { it.trim().removePrefix("•").removePrefix("-").removePrefix("*").trim() }
+                .filter { it.isNotBlank() }
+                .toMutableList()
+        }
+
         val remaining = blocks.drop(1).filterNot { block ->
             if (!block.startsWith("$dateStr] 原始输入")) {
                 false
             } else {
-                if (specificContentToRemove == null) {
+                if (targetsToRemove == null) {
                     true
                 } else {
                     val blockContent = block.substringAfter("$dateStr] 原始输入\n").trim()
-                    blockContent == specificContentToRemove.trim() ||
-                        specificContentToRemove.trim().contains(blockContent)
+                    val normalizedBlock = blockContent.lines()
+                        .map { it.trim().removePrefix("•").removePrefix("-").removePrefix("*").trim() }
+                        .filter { it.isNotBlank() }
+                        .joinToString("\n")
+
+                    // Match exact entry or line to remove, consuming one instance to preserve duplicates
+                    val matchIdx = targetsToRemove.indexOfFirst { target ->
+                        normalizedBlock == target || blockContent == target
+                    }
+                    if (matchIdx != -1) {
+                        targetsToRemove.removeAt(matchIdx)
+                        true
+                    } else {
+                        false
+                    }
                 }
             }
         }
@@ -233,15 +258,14 @@ class MarkdownFileManager(private val context: Context) {
     /**
      * Clear all markdown records while restoring complete directory structure (N-30).
      */
-    fun clearAllData() {
-        if (baseDir.exists()) {
-            baseDir.deleteRecursively()
-        }
-        baseDir.mkdirs()
-        worklogsDir.mkdirs()
-        tempDir.mkdirs()
-        userDir.mkdirs()
-        reportsDir.mkdirs()
+    fun clearAllData(): Boolean = synchronized(rawNotesLock) {
+        val deleted = if (baseDir.exists()) baseDir.deleteRecursively() else true
+        val m1 = baseDir.mkdirs() || baseDir.exists()
+        val m2 = worklogsDir.mkdirs() || worklogsDir.exists()
+        val m3 = tempDir.mkdirs() || tempDir.exists()
+        val m4 = userDir.mkdirs() || userDir.exists()
+        val m5 = reportsDir.mkdirs() || reportsDir.exists()
+        deleted && m1 && m2 && m3 && m4 && m5
     }
 
     /**

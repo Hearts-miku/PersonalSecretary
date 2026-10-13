@@ -10,8 +10,12 @@ import com.example.data.local.UserCareerProfileEntity
 import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.WorkLogRepository
 import com.example.data.utils.WorkLogFilterUtils
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 data class ReportDocument(
     val title: String,
@@ -68,7 +72,40 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     private val _searchResults = MutableStateFlow<List<AiRepository.SemanticSearchResult>?>(null)
     val searchResults: StateFlow<List<AiRepository.SemanticSearchResult>?> = _searchResults.asStateFlow()
 
-    private var activeAiJob: kotlinx.coroutines.Job? = null
+    private var activeAiJob: Job? = null
+    private val activeJobToken = AtomicLong(0L)
+
+    private fun launchExclusiveJob(
+        statusSetter: ((Boolean) -> Unit)? = null,
+        block: suspend kotlinx.coroutines.CoroutineScope.(token: Long) -> Unit
+    ): Job {
+        val previousJob = activeAiJob
+        val token = activeJobToken.incrementAndGet()
+        statusSetter?.invoke(true)
+
+        val newJob = viewModelScope.launch {
+            try {
+                if (previousJob != null && previousJob.isActive) {
+                    previousJob.cancelAndJoin()
+                }
+                if (activeJobToken.get() != token) return@launch
+                block(token)
+            } catch (e: CancellationException) {
+                // Cancelled cleanly, do not surface as UI error
+                throw e
+            } catch (e: Exception) {
+                if (activeJobToken.get() == token) {
+                    showSnack("任务执行失败: ${e.message}")
+                }
+            } finally {
+                if (activeJobToken.get() == token) {
+                    statusSetter?.invoke(false)
+                }
+            }
+        }
+        activeAiJob = newJob
+        return newJob
+    }
 
     private val _lastDeletedTodo = MutableStateFlow<TodoItemEntity?>(null)
     val lastDeletedTodo: StateFlow<TodoItemEntity?> = _lastDeletedTodo.asStateFlow()
@@ -96,8 +133,9 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     val savedReportFiles: StateFlow<List<java.io.File>> = _savedReportFiles.asStateFlow()
 
     fun cancelActiveAiJob() {
-        activeAiJob?.cancel()
+        val job = activeAiJob
         activeAiJob = null
+        activeJobToken.incrementAndGet()
         _isProcessingAI.value = false
         _isGeneratingResume.value = false
         _isGeneratingWorkExp.value = false
@@ -107,6 +145,9 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         _isSearchingLogs.value = false
         _isTestingConnection.value = false
         _aiStatusMessage.value = ""
+        viewModelScope.launch {
+            job?.cancelAndJoin()
+        }
         showSnack("已取消当前 AI 任务")
     }
 
@@ -197,11 +238,26 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     fun triggerAISummarizeSelectedDate() {
         val date = _selectedDate.value
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isProcessingAI.value = true
+        launchExclusiveJob({ _isProcessingAI.value = it }) {
             _aiStatusMessage.value = "正在对【$date】进行 AI 结构化整理..."
-            try {
+            val result = repository.triggerAISummarize(date) { msg ->
+                _aiStatusMessage.value = msg
+            }
+            if (result.isSuccess) {
+                showSnack(result.getOrNull() ?: "AI 总结完成")
+            } else {
+                showSnack("AI 处理失败: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
+
+    fun triggerAISummarizeAllUnsummarized() {
+        val initialDate = _selectedDate.value
+        launchExclusiveJob({ _isProcessingAI.value = it }) {
+            val unsummarizedLogs = WorkLogFilterUtils.filterUnsummarizedLogs(allLogs.value)
+            if (unsummarizedLogs.isEmpty()) {
+                val date = initialDate
+                _aiStatusMessage.value = "正在对【$date】进行 AI 结构化整理..."
                 val result = repository.triggerAISummarize(date) { msg ->
                     _aiStatusMessage.value = msg
                 }
@@ -210,67 +266,37 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 } else {
                     showSnack("AI 处理失败: ${result.exceptionOrNull()?.message}")
                 }
-            } finally {
-                _isProcessingAI.value = false
+                return@launchExclusiveJob
             }
-        }
-    }
 
-    fun triggerAISummarizeAllUnsummarized() {
-        activeAiJob?.cancel()
-        val initialDate = _selectedDate.value
-        activeAiJob = viewModelScope.launch {
-            val unsummarizedLogs = WorkLogFilterUtils.filterUnsummarizedLogs(allLogs.value)
-            _isProcessingAI.value = true
-            try {
-                if (unsummarizedLogs.isEmpty()) {
-                    // Inline execution to avoid re-assigning activeAiJob (N-26)
-                    val date = initialDate
-                    _aiStatusMessage.value = "正在对【$date】进行 AI 结构化整理..."
-                    val result = repository.triggerAISummarize(date) { msg ->
-                        _aiStatusMessage.value = msg
-                    }
-                    if (result.isSuccess) {
-                        showSnack(result.getOrNull() ?: "AI 总结完成")
-                    } else {
-                        showSnack("AI 处理失败: ${result.exceptionOrNull()?.message}")
-                    }
-                    return@launch
+            val total = unsummarizedLogs.size
+            var successCount = 0
+            var failureCount = 0
+
+            val sortedList = unsummarizedLogs.sortedByDescending { it.date == initialDate }
+
+            for ((index, log) in sortedList.withIndex()) {
+                val date = log.date
+                _aiStatusMessage.value = "正在对【$date】进行 AI 结构化整理 (${index + 1}/$total)..."
+
+                val result = repository.triggerAISummarize(date) { msg ->
+                    _aiStatusMessage.value = "【$date】$msg"
                 }
-
-                val total = unsummarizedLogs.size
-                var successCount = 0
-                var failureCount = 0
-
-                // Prioritize initialDate first if it is among unsummarized
-                val sortedList = unsummarizedLogs.sortedByDescending { it.date == initialDate }
-
-                for ((index, log) in sortedList.withIndex()) {
-                    val date = log.date
-                    _aiStatusMessage.value = "正在对【$date】进行 AI 结构化整理 (${index + 1}/$total)..."
-                    
-                    val result = repository.triggerAISummarize(date) { msg ->
-                        _aiStatusMessage.value = "【$date】$msg"
-                    }
-                    if (result.isSuccess) {
-                        successCount++
-                    } else {
-                        failureCount++
-                    }
-                }
-
-                if (failureCount == 0) {
-                    if (total == 1) {
-                        showSnack("【${sortedList.first().date}】AI 整理完成！")
-                    } else {
-                        showSnack("已成功整理全部 $successCount 个日期的工作日志！")
-                    }
+                if (result.isSuccess) {
+                    successCount++
                 } else {
-                    showSnack("整理完成：$successCount 个成功，$failureCount 个失败")
+                    failureCount++
                 }
-            } finally {
-                _isProcessingAI.value = false
-                _selectedDate.value = initialDate // Restore selected date (N-27)
+            }
+
+            if (failureCount == 0) {
+                if (total == 1) {
+                    showSnack("【${sortedList.first().date}】AI 整理完成！")
+                } else {
+                    showSnack("已成功整理全部 $successCount 个日期的工作日志！")
+                }
+            } else {
+                showSnack("整理完成：$successCount 个成功，$failureCount 个失败")
             }
         }
     }
@@ -280,22 +306,16 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun triggerManualScheduledTask() {
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isProcessingAI.value = true
+        launchExclusiveJob({ _isProcessingAI.value = it }) {
             _aiStatusMessage.value = "启动后台全量工作总结任务..."
-            try {
-                val result = repository.triggerAISummarize(repository.getTodayString()) { msg ->
-                    _aiStatusMessage.value = msg
-                }
+            val result = repository.triggerAISummarize(repository.getTodayString()) { msg ->
+                _aiStatusMessage.value = msg
+            }
 
-                if (result.isSuccess) {
-                    showSnack("后台定时整理任务模拟运行成功！")
-                } else {
-                    showSnack("后台整理运行失败: ${result.exceptionOrNull()?.message}")
-                }
-            } finally {
-                _isProcessingAI.value = false
+            if (result.isSuccess) {
+                showSnack("后台定时整理任务模拟运行成功！")
+            } else {
+                showSnack("后台整理运行失败: ${result.exceptionOrNull()?.message}")
             }
         }
     }
@@ -347,11 +367,15 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
             if (content != null) {
                 val title = file.nameWithoutExtension
                 _generatedReportMarkdown.value = content
+                val match = Regex("""^(\d{4}-\d{2}-\d{2})_至_(\d{4}-\d{2}-\d{2})_(.+)$""").find(title)
+                val startDate = match?.groupValues?.get(1) ?: _reportStartDate.value
+                val endDate = match?.groupValues?.get(2) ?: _reportEndDate.value
+                val type = match?.groupValues?.get(3) ?: _reportType.value
                 _currentReport.value = ReportDocument(
                     title = title,
-                    startDate = _reportStartDate.value,
-                    endDate = _reportEndDate.value,
-                    reportType = _reportType.value,
+                    startDate = startDate,
+                    endDate = endDate,
+                    reportType = type,
                     content = content,
                     filename = file.name
                 )
@@ -401,92 +425,68 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         _reportEndDate.value = actualEnd
         _reportType.value = reportType
 
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isGeneratingReport.value = true
+        launchExclusiveJob({ _isGeneratingReport.value = it }) {
             _aiStatusMessage.value = "正在基于【$actualStart ~ $actualEnd】的工作记录提炼《$reportType》..."
-            try {
-                val res = repository.generateReport(actualStart, actualEnd, reportType)
-                if (res.isSuccess) {
-                    val reportContent = res.getOrDefault("")
-                    _generatedReportMarkdown.value = reportContent
-                    val title = "${actualStart}_至_${actualEnd}_${reportType}"
-                    val filename = "${title}.md"
-                    _currentReport.value = ReportDocument(
-                        title = title,
-                        startDate = actualStart,
-                        endDate = actualEnd,
-                        reportType = reportType,
-                        content = reportContent,
-                        filename = filename
-                    )
-                    // Auto save the generated report
-                    repository.saveReport(filename, reportContent)
-                    loadSavedReports()
-                    showSnack("周期工作报告已生成并自动保存！")
-                } else {
-                    showSnack("报告生成失败: ${res.exceptionOrNull()?.message}")
-                }
-            } finally {
-                _isGeneratingReport.value = false
+            val res = repository.generateReport(actualStart, actualEnd, reportType)
+            if (res.isSuccess) {
+                val reportContent = res.getOrDefault("")
+                _generatedReportMarkdown.value = reportContent
+                val title = "${actualStart}_至_${actualEnd}_${reportType}"
+                val filename = "${title}.md"
+                _currentReport.value = ReportDocument(
+                    title = title,
+                    startDate = actualStart,
+                    endDate = actualEnd,
+                    reportType = reportType,
+                    content = reportContent,
+                    filename = filename
+                )
+                // Auto save the generated report
+                repository.saveReport(filename, reportContent)
+                loadSavedReports()
+                showSnack("周期工作报告已生成并自动保存！")
+            } else {
+                showSnack("报告生成失败: ${res.exceptionOrNull()?.message}")
             }
         }
     }
 
     fun generateResume(style: String = _selectedResumeStyle.value) {
         setSelectedResumeStyle(style)
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isGeneratingResume.value = true
+        launchExclusiveJob({ _isGeneratingResume.value = it }) {
             _aiStatusMessage.value = "正在使用 AI 生成《$style》风格敏感词保护简历..."
-            try {
-                val res = repository.generateResume(style)
-                if (res.isSuccess) {
-                    val resumeStr = res.getOrDefault("")
-                    _resumeMarkdown.value = resumeStr
-                    repository.saveResume(resumeStr)
-                    showSnack("简历生成成功！已包含隐私占位符保护。")
-                } else {
-                    showSnack("简历生成失败: ${res.exceptionOrNull()?.message}")
-                }
-            } finally {
-                _isGeneratingResume.value = false
+            val res = repository.generateResume(style)
+            if (res.isSuccess) {
+                val resumeStr = res.getOrDefault("")
+                _resumeMarkdown.value = resumeStr
+                repository.saveResume(resumeStr)
+                showSnack("简历生成成功！已包含隐私占位符保护。")
+            } else {
+                showSnack("简历生成失败: ${res.exceptionOrNull()?.message}")
             }
         }
     }
 
     fun generateWorkExperiences() {
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isGeneratingWorkExp.value = true
+        launchExclusiveJob({ _isGeneratingWorkExp.value = it }) {
             _aiStatusMessage.value = "AI 正在全量整理并提炼【工作经历】..."
-            try {
-                val res = repository.generateWorkExperiences()
-                if (res.isSuccess) {
-                    showSnack("工作经历提炼成功！")
-                } else {
-                    showSnack("工作经历生成失败: ${res.exceptionOrNull()?.message}")
-                }
-            } finally {
-                _isGeneratingWorkExp.value = false
+            val res = repository.generateWorkExperiences()
+            if (res.isSuccess) {
+                showSnack("工作经历提炼成功！")
+            } else {
+                showSnack("工作经历生成失败: ${res.exceptionOrNull()?.message}")
             }
         }
     }
 
     fun generateProjectExperiences() {
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isGeneratingProjectExp.value = true
+        launchExclusiveJob({ _isGeneratingProjectExp.value = it }) {
             _aiStatusMessage.value = "AI 正在全量提取核心【项目经历】..."
-            try {
-                val res = repository.generateProjectExperiences()
-                if (res.isSuccess) {
-                    showSnack("项目经历提炼成功！")
-                } else {
-                    showSnack("项目经历生成失败: ${res.exceptionOrNull()?.message}")
-                }
-            } finally {
-                _isGeneratingProjectExp.value = false
+            val res = repository.generateProjectExperiences()
+            if (res.isSuccess) {
+                showSnack("项目经历提炼成功！")
+            } else {
+                showSnack("项目经历生成失败: ${res.exceptionOrNull()?.message}")
             }
         }
     }
@@ -548,29 +548,23 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         }
 
         if (_isTestingConnection.value) return
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isTestingConnection.value = true
+        launchExclusiveJob({ _isTestingConnection.value = it }) {
             _connectionTestResult.value = null
             val startTime = System.currentTimeMillis()
-            try {
-                val result = repository.testAiConnection(baseUrl.trim(), apiKey.trim(), model.trim())
-                val duration = System.currentTimeMillis() - startTime
+            val result = repository.testAiConnection(baseUrl.trim(), apiKey.trim(), model.trim())
+            val duration = System.currentTimeMillis() - startTime
 
-                if (result.isSuccess) {
-                    val responseText = result.getOrDefault("").trim()
-                    val snippet = if (responseText.length > 60) responseText.take(60) + "..." else responseText
-                    val msg = "连接成功（耗时 ${duration}ms）\n模型响应：$snippet"
-                    _connectionTestResult.value = msg
-                    showSnack("API 连接测试成功 (${duration}ms)")
-                } else {
-                    val err = result.exceptionOrNull()?.message ?: "未知异常"
-                    val msg = "连接失败: $err"
-                    _connectionTestResult.value = msg
-                    showSnack("连接测试失败: $err")
-                }
-            } finally {
-                _isTestingConnection.value = false
+            if (result.isSuccess) {
+                val responseText = result.getOrDefault("").trim()
+                val snippet = if (responseText.length > 60) responseText.take(60) + "..." else responseText
+                val msg = "连接成功（耗时 ${duration}ms）\n模型响应：$snippet"
+                _connectionTestResult.value = msg
+                showSnack("API 连接测试成功 (${duration}ms)")
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "未知异常"
+                val msg = "连接失败: $err"
+                _connectionTestResult.value = msg
+                showSnack("连接测试失败: $err")
             }
         }
     }
@@ -594,72 +588,57 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun importWorkExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isImportingFile.value = true
-            try {
-                val finalContent = if (refineWithAi) {
-                    val res = repository.aiRepository.refineImportedContent(content, "工作经历", repository.getSettings())
-                    if (res.isFailure) {
-                        showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
-                        return@launch
-                    }
-                    res.getOrNull() ?: content
-                } else {
-                    content
+    fun importWorkExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false, onSuccess: () -> Unit = {}) {
+        launchExclusiveJob({ _isImportingFile.value = it }) {
+            val finalContent = if (refineWithAi) {
+                val res = repository.aiRepository.refineImportedContent(content, "工作经历", repository.getSettings())
+                if (res.isFailure) {
+                    showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
+                    return@launchExclusiveJob
                 }
-                repository.importWorkExperiences(finalContent, sourceFileName)
-                showSnack(if (refineWithAi) "工作经历已由 AI 提炼并导入！" else "工作经历文件已直接导入！")
-            } finally {
-                _isImportingFile.value = false
+                res.getOrNull() ?: content
+            } else {
+                content
             }
+            repository.importWorkExperiences(finalContent, sourceFileName)
+            showSnack(if (refineWithAi) "工作经历已由 AI 提炼并导入！" else "工作经历文件已直接导入！")
+            onSuccess()
         }
     }
 
-    fun importProjectExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isImportingFile.value = true
-            try {
-                val finalContent = if (refineWithAi) {
-                    val res = repository.aiRepository.refineImportedContent(content, "项目经历", repository.getSettings())
-                    if (res.isFailure) {
-                        showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
-                        return@launch
-                    }
-                    res.getOrNull() ?: content
-                } else {
-                    content
+    fun importProjectExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false, onSuccess: () -> Unit = {}) {
+        launchExclusiveJob({ _isImportingFile.value = it }) {
+            val finalContent = if (refineWithAi) {
+                val res = repository.aiRepository.refineImportedContent(content, "项目经历", repository.getSettings())
+                if (res.isFailure) {
+                    showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
+                    return@launchExclusiveJob
                 }
-                repository.importProjectExperiences(finalContent, sourceFileName)
-                showSnack(if (refineWithAi) "项目经历已由 AI 提炼并导入！" else "项目经历文件已直接导入！")
-            } finally {
-                _isImportingFile.value = false
+                res.getOrNull() ?: content
+            } else {
+                content
             }
+            repository.importProjectExperiences(finalContent, sourceFileName)
+            showSnack(if (refineWithAi) "项目经历已由 AI 提炼并导入！" else "项目经历文件已直接导入！")
+            onSuccess()
         }
     }
 
-    fun importCareerProfile(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isImportingFile.value = true
-            try {
-                val finalContent = if (refineWithAi) {
-                    val res = repository.aiRepository.refineImportedContent(content, "职业档案全貌", repository.getSettings())
-                    if (res.isFailure) {
-                        showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
-                        return@launch
-                    }
-                    res.getOrNull() ?: content
-                } else {
-                    content
+    fun importCareerProfile(content: String, sourceFileName: String, refineWithAi: Boolean = false, onSuccess: () -> Unit = {}) {
+        launchExclusiveJob({ _isImportingFile.value = it }) {
+            val finalContent = if (refineWithAi) {
+                val res = repository.aiRepository.refineImportedContent(content, "职业档案全貌", repository.getSettings())
+                if (res.isFailure) {
+                    showSnack("AI 提炼失败：${res.exceptionOrNull()?.message}")
+                    return@launchExclusiveJob
                 }
-                repository.updateCareerProfileManually(finalContent)
-                showSnack(if (refineWithAi) "职业档案全貌已由 AI 提炼并导入！" else "职业档案全貌文件已直接导入！")
-            } finally {
-                _isImportingFile.value = false
+                res.getOrNull() ?: content
+            } else {
+                content
             }
+            repository.updateCareerProfileManually(finalContent)
+            showSnack(if (refineWithAi) "职业档案全貌已由 AI 提炼并导入！" else "职业档案全貌文件已直接导入！")
+            onSuccess()
         }
     }
 
@@ -737,20 +716,14 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         }
         _searchQuery.value = q
 
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _isSearchingLogs.value = true
-            try {
-                val res = repository.performSemanticSearch(q) { fallbackMsg ->
-                    showSnack(fallbackMsg)
-                }
-                if (res.isSuccess) {
-                    _searchResults.value = res.getOrDefault(emptyList())
-                } else {
-                    showSnack("搜索失败: ${res.exceptionOrNull()?.localizedMessage}")
-                }
-            } finally {
-                _isSearchingLogs.value = false
+        launchExclusiveJob({ _isSearchingLogs.value = it }) {
+            val res = repository.performSemanticSearch(q) { fallbackMsg ->
+                showSnack(fallbackMsg)
+            }
+            if (res.isSuccess) {
+                _searchResults.value = res.getOrDefault(emptyList())
+            } else {
+                showSnack("搜索失败: ${res.exceptionOrNull()?.localizedMessage}")
             }
         }
     }
@@ -785,9 +758,14 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun clearAllData() {
-        cancelActiveAiJob()
+        val job = activeAiJob
+        activeAiJob = null
+        activeJobToken.incrementAndGet()
         viewModelScope.launch {
             try {
+                if (job != null && job.isActive) {
+                    job.cancelAndJoin()
+                }
                 repository.clearAllData()
                 _rawInputText.value = ""
                 _resumeMarkdown.value = ""
@@ -800,6 +778,15 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 _searchResults.value = emptyList()
                 _searchQuery.value = ""
                 _lastDeletedTodo.value = null
+                _isProcessingAI.value = false
+                _isGeneratingResume.value = false
+                _isGeneratingWorkExp.value = false
+                _isGeneratingProjectExp.value = false
+                _isGeneratingReport.value = false
+                _isImportingFile.value = false
+                _isSearchingLogs.value = false
+                _isTestingConnection.value = false
+                _aiStatusMessage.value = ""
                 loadMdInfo()
                 loadSavedReports()
                 showSnack("所有记录的数据已清空")

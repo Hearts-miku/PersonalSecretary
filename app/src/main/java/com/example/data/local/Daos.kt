@@ -49,6 +49,21 @@ interface TodoItemDao {
         }
     }
 
+    @Transaction
+    suspend fun mergeTodosForDate(sourceDate: String, newTodos: List<TodoItemEntity>) {
+        val existing = getAllTodosOnce().filter { it.sourceLogDate == sourceDate }
+        val existingCompletedTitles = existing.filter { it.isCompleted }.map { it.title.trim().lowercase() }.toSet()
+        val existingPendingTitles = existing.filter { !it.isCompleted }.map { it.title.trim().lowercase() }.toSet()
+
+        val toInsert = newTodos.filter {
+            val t = it.title.trim().lowercase()
+            !existingCompletedTitles.contains(t) && !existingPendingTitles.contains(t)
+        }
+        if (toInsert.isNotEmpty()) {
+            insertTodos(toInsert)
+        }
+    }
+
     @Query("UPDATE todo_items SET isCompleted = :isCompleted WHERE id = :id")
     suspend fun setCompleted(id: Int, isCompleted: Boolean)
 

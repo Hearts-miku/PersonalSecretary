@@ -265,6 +265,17 @@ fun ProfileScreen(
                         ),
                         modifier = Modifier.testTag("upload_file_header_chip")
                     )
+                    if (pendingImportContent != null) {
+                        AssistChip(
+                            onClick = { showImportTypeDialog = true },
+                            label = { Text("重试导入待处理文件") },
+                            leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                labelColor = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        )
+                    }
                     AssistChip(
                         onClick = onNavigateToResume,
                         label = { Text("生成简历") },
@@ -777,12 +788,20 @@ fun ProfileScreen(
                         OutlinedButton(
                             onClick = {
                                 when (selectedTarget) {
-                                    0 -> viewModel.importWorkExperiences(content, fileName, false)
-                                    1 -> viewModel.importProjectExperiences(content, fileName, false)
-                                    2 -> viewModel.importCareerProfile(content, fileName, false)
+                                    0 -> viewModel.importWorkExperiences(content, fileName, false) {
+                                        pendingImportContent = null
+                                        pendingImportFileName = ""
+                                    }
+                                    1 -> viewModel.importProjectExperiences(content, fileName, false) {
+                                        pendingImportContent = null
+                                        pendingImportFileName = ""
+                                    }
+                                    2 -> viewModel.importCareerProfile(content, fileName, false) {
+                                        pendingImportContent = null
+                                        pendingImportFileName = ""
+                                    }
                                 }
                                 showImportTypeDialog = false
-                                pendingImportContent = null
                                 activeTab = selectedTarget
                             },
                             modifier = Modifier.weight(1f)
@@ -793,12 +812,20 @@ fun ProfileScreen(
                         Button(
                             onClick = {
                                 when (selectedTarget) {
-                                    0 -> viewModel.importWorkExperiences(content, fileName, true)
-                                    1 -> viewModel.importProjectExperiences(content, fileName, true)
-                                    2 -> viewModel.importCareerProfile(content, fileName, true)
+                                    0 -> viewModel.importWorkExperiences(content, fileName, true) {
+                                        pendingImportContent = null
+                                        pendingImportFileName = ""
+                                    }
+                                    1 -> viewModel.importProjectExperiences(content, fileName, true) {
+                                        pendingImportContent = null
+                                        pendingImportFileName = ""
+                                    }
+                                    2 -> viewModel.importCareerProfile(content, fileName, true) {
+                                        pendingImportContent = null
+                                        pendingImportFileName = ""
+                                    }
                                 }
                                 showImportTypeDialog = false
-                                pendingImportContent = null
                                 activeTab = selectedTarget
                             },
                             modifier = Modifier.weight(1f)
