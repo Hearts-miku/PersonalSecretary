@@ -29,6 +29,9 @@ interface TodoItemDao {
     @Query("SELECT * FROM todo_items ORDER BY isCompleted ASC, CASE priority WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END ASC, id DESC")
     fun getAllTodos(): Flow<List<TodoItemEntity>>
 
+    @Query("SELECT * FROM todo_items ORDER BY id ASC")
+    suspend fun getAllTodosOnce(): List<TodoItemEntity>
+
     @Query("DELETE FROM todo_items WHERE sourceLogDate = :sourceDate AND isCompleted = 0")
     suspend fun deletePendingTodosForDate(sourceDate: String)
 
@@ -90,6 +93,9 @@ interface ExperienceVersionDao {
 
     @Query("SELECT * FROM experience_versions WHERE type = :type ORDER BY timestamp DESC")
     suspend fun getVersionsByType(type: String): List<ExperienceVersionEntity>
+
+    @Query("SELECT * FROM experience_versions ORDER BY timestamp DESC")
+    suspend fun getAllVersionsOnce(): List<ExperienceVersionEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertVersion(version: ExperienceVersionEntity): Long

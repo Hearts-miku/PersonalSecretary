@@ -9,32 +9,34 @@ import java.io.File
  * - /markdown_records/worklogs/YYYY-MM-DD.md (Type 1: Daily summary docs)
  * - /markdown_records/temp/raw_notes.md (Type 2: Raw uncleared user input doc)
  * - /markdown_records/user/career_profile.md (Type 3: User career & skill profile doc)
+ * - /markdown_records/reports/ (Reports doc archive)
  */
 class MarkdownFileManager(private val context: Context) {
 
-    private val baseDir: File by lazy {
-        File(context.filesDir, "markdown_records").apply {
+    private val baseDir: File
+        get() = File(context.filesDir, "markdown_records").apply {
             if (!exists()) mkdirs()
         }
-    }
 
-    private val worklogsDir: File by lazy {
-        File(baseDir, "worklogs").apply {
+    private val worklogsDir: File
+        get() = File(baseDir, "worklogs").apply {
             if (!exists()) mkdirs()
         }
-    }
 
-    private val tempDir: File by lazy {
-        File(baseDir, "temp").apply {
+    private val tempDir: File
+        get() = File(baseDir, "temp").apply {
             if (!exists()) mkdirs()
         }
-    }
 
-    private val userDir: File by lazy {
-        File(baseDir, "user").apply {
+    private val userDir: File
+        get() = File(baseDir, "user").apply {
             if (!exists()) mkdirs()
         }
-    }
+
+    private val reportsDir: File
+        get() = File(baseDir, "reports").apply {
+            if (!exists()) mkdirs()
+        }
 
     private val rawNotesFile: File
         get() = File(tempDir, "raw_notes.md")
@@ -52,7 +54,9 @@ class MarkdownFileManager(private val context: Context) {
         get() = File(userDir, "project_experiences.md")
 
     fun writeGeneratedResume(markdownContent: String) {
-        resumeFile.writeText(markdownContent)
+        val file = resumeFile
+        file.parentFile?.mkdirs()
+        file.writeText(markdownContent)
     }
 
     fun getGeneratedResumeContent(): String {
@@ -60,7 +64,9 @@ class MarkdownFileManager(private val context: Context) {
     }
     
     fun writeWorkExperiences(markdownContent: String) {
-        workExperiencesFile.writeText(markdownContent)
+        val file = workExperiencesFile
+        file.parentFile?.mkdirs()
+        file.writeText(markdownContent)
     }
     
     fun getWorkExperiencesContent(): String {
@@ -68,27 +74,37 @@ class MarkdownFileManager(private val context: Context) {
     }
     
     fun writeProjectExperiences(markdownContent: String) {
-        projectExperiencesFile.writeText(markdownContent)
+        val file = projectExperiencesFile
+        file.parentFile?.mkdirs()
+        file.writeText(markdownContent)
     }
     
     fun getProjectExperiencesContent(): String {
         return if (projectExperiencesFile.exists()) projectExperiencesFile.readText() else ""
     }
 
-    private val reportsDir: File by lazy {
-        File(baseDir, "reports").apply {
-            if (!exists()) mkdirs()
-        }
+    /**
+     * Sanitizes report filename while fully preserving legal Unicode / Chinese characters,
+     * removing path traversal, slashes, and characters illegal on file systems (N-29).
+     */
+    fun sanitizeReportFileName(filename: String): String {
+        val baseName = filename.trim().removeSuffix(".md").trim()
+        val clean = baseName.replace(Regex("""[/\\:*?"<>|\x00-\x1F]"""), "_")
+            .replace("..", "_")
+            .trim()
+            .ifBlank { "report_${System.currentTimeMillis()}" }
+        return "$clean.md"
     }
 
     fun writeReport(filename: String, markdownContent: String) {
-        val safeName = filename.replace(Regex("""[^a-zA-Z0-9_\-\.]"""), "_")
+        val safeName = sanitizeReportFileName(filename)
         val file = File(reportsDir, safeName)
+        file.parentFile?.mkdirs()
         file.writeText(markdownContent)
     }
 
     fun getReport(filename: String): String? {
-        val safeName = filename.replace(Regex("""[^a-zA-Z0-9_\-\.]"""), "_")
+        val safeName = sanitizeReportFileName(filename)
         val file = File(reportsDir, safeName)
         return if (file.exists()) file.readText() else null
     }
@@ -102,6 +118,7 @@ class MarkdownFileManager(private val context: Context) {
 
     fun appendRawNote(text: String, dateStr: String) {
         val file = rawNotesFile
+        file.parentFile?.mkdirs()
         val entry = "\n\n### [$dateStr] 原始输入\n$text\n"
         file.appendText(entry)
     }
@@ -111,7 +128,12 @@ class MarkdownFileManager(private val context: Context) {
         return if (file.exists()) file.readText() else ""
     }
 
-    fun removeRawNotesForDate(dateStr: String) {
+    /**
+     * Removes raw notes for a date.
+     * If [specificContentToRemove] is provided (e.g. from a specific summary snapshot),
+     * only entries matching that content are removed, preserving any concurrently added notes (N-37).
+     */
+    fun removeRawNotesForDate(dateStr: String, specificContentToRemove: String? = null) {
         val file = rawNotesFile
         if (!file.exists()) return
         val text = file.readText()
@@ -120,7 +142,19 @@ class MarkdownFileManager(private val context: Context) {
 
         val blocks = text.split("\n\n### [")
         val header = blocks.firstOrNull() ?: "# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n"
-        val remaining = blocks.drop(1).filterNot { it.startsWith("$dateStr] 原始输入") }
+        val remaining = blocks.drop(1).filterNot { block ->
+            if (!block.startsWith("$dateStr] 原始输入")) {
+                false
+            } else {
+                if (specificContentToRemove == null) {
+                    true
+                } else {
+                    val blockContent = block.substringAfter("$dateStr] 原始输入\n").trim()
+                    blockContent == specificContentToRemove.trim() ||
+                        specificContentToRemove.trim().contains(blockContent)
+                }
+            }
+        }
 
         val newContent = if (remaining.isEmpty()) {
             "# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n"
@@ -128,6 +162,7 @@ class MarkdownFileManager(private val context: Context) {
             if (header.endsWith("\n\n")) header + "### [" + remaining.joinToString("\n\n### [")
             else header + "\n\n### [" + remaining.joinToString("\n\n### [")
         }
+        file.parentFile?.mkdirs()
         file.writeText(newContent)
     }
 
@@ -136,6 +171,7 @@ class MarkdownFileManager(private val context: Context) {
     fun writeDailySummary(dateStr: String, markdownContent: String) {
         if (!dateStr.matches(Regex("""^\d{4}-\d{2}-\d{2}$"""))) return
         val file = File(worklogsDir, "$dateStr.md")
+        file.parentFile?.mkdirs()
         file.writeText(markdownContent)
     }
 
@@ -153,7 +189,9 @@ class MarkdownFileManager(private val context: Context) {
     // --- Type 3: User Career Profile Document (user/career_profile.md) ---
 
     fun writeCareerProfile(markdownContent: String) {
-        careerProfileFile.writeText(markdownContent)
+        val file = careerProfileFile
+        file.parentFile?.mkdirs()
+        file.writeText(markdownContent)
     }
 
     fun getCareerProfileContent(): String {
@@ -192,11 +230,18 @@ class MarkdownFileManager(private val context: Context) {
         return result
     }
 
+    /**
+     * Clear all markdown records while restoring complete directory structure (N-30).
+     */
     fun clearAllData() {
         if (baseDir.exists()) {
             baseDir.deleteRecursively()
-            baseDir.mkdirs()
         }
+        baseDir.mkdirs()
+        worklogsDir.mkdirs()
+        tempDir.mkdirs()
+        userDir.mkdirs()
+        reportsDir.mkdirs()
     }
 
     /**
@@ -218,7 +263,9 @@ class MarkdownFileManager(private val context: Context) {
 
     fun saveResumeStyle(style: String) {
         try {
-            File(userDir, "resume_style.txt").writeText(style)
+            val f = File(userDir, "resume_style.txt")
+            f.parentFile?.mkdirs()
+            f.writeText(style)
         } catch (e: Exception) {
             // Ignore write error
         }

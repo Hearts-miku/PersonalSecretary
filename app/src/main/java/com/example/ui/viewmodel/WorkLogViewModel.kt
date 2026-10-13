@@ -13,6 +13,15 @@ import com.example.data.utils.WorkLogFilterUtils
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+data class ReportDocument(
+    val title: String,
+    val startDate: String,
+    val endDate: String,
+    val reportType: String,
+    val content: String,
+    val filename: String
+)
+
 class WorkLogViewModel(application: Application) : AndroidViewModel(application) {
 
     val repository = WorkLogRepository(application)
@@ -76,6 +85,9 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
     private val _generatedReportMarkdown = MutableStateFlow("")
     val generatedReportMarkdown: StateFlow<String> = _generatedReportMarkdown.asStateFlow()
+
+    private val _currentReport = MutableStateFlow<ReportDocument?>(null)
+    val currentReport: StateFlow<ReportDocument?> = _currentReport.asStateFlow()
 
     private val _isGeneratingReport = MutableStateFlow(false)
     val isGeneratingReport: StateFlow<Boolean> = _isGeneratingReport.asStateFlow()
@@ -235,7 +247,6 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
 
                 for ((index, log) in sortedList.withIndex()) {
                     val date = log.date
-                    _selectedDate.value = date
                     _aiStatusMessage.value = "正在对【$date】进行 AI 结构化整理 (${index + 1}/$total)..."
                     
                     val result = repository.triggerAISummarize(date) { msg ->
@@ -269,19 +280,22 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun triggerManualScheduledTask() {
-        viewModelScope.launch {
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
             _isProcessingAI.value = true
             _aiStatusMessage.value = "启动后台全量工作总结任务..."
+            try {
+                val result = repository.triggerAISummarize(repository.getTodayString()) { msg ->
+                    _aiStatusMessage.value = msg
+                }
 
-            val result = repository.triggerAISummarize(repository.getTodayString()) { msg ->
-                _aiStatusMessage.value = msg
-            }
-
-            _isProcessingAI.value = false
-            if (result.isSuccess) {
-                showSnack("后台定时整理任务模拟运行成功！")
-            } else {
-                showSnack("后台整理运行失败: ${result.exceptionOrNull()?.message}")
+                if (result.isSuccess) {
+                    showSnack("后台定时整理任务模拟运行成功！")
+                } else {
+                    showSnack("后台整理运行失败: ${result.exceptionOrNull()?.message}")
+                }
+            } finally {
+                _isProcessingAI.value = false
             }
         }
     }
@@ -331,14 +345,24 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val content = repository.getReportContent(file.name)
             if (content != null) {
+                val title = file.nameWithoutExtension
                 _generatedReportMarkdown.value = content
-                showSnack("已载入报告【${file.nameWithoutExtension}】")
+                _currentReport.value = ReportDocument(
+                    title = title,
+                    startDate = _reportStartDate.value,
+                    endDate = _reportEndDate.value,
+                    reportType = _reportType.value,
+                    content = content,
+                    filename = file.name
+                )
+                showSnack("已载入报告【$title】")
             }
         }
     }
 
     fun updateGeneratedReportMarkdown(content: String) {
         _generatedReportMarkdown.value = content
+        _currentReport.value = _currentReport.value?.copy(content = content)
     }
 
     fun saveCurrentReport(customTitle: String? = null) {
@@ -348,10 +372,20 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         viewModelScope.launch {
+            val cur = _currentReport.value
             val title = customTitle?.ifBlank { null }
+                ?: cur?.title
                 ?: "${_reportStartDate.value}_至_${_reportEndDate.value}_${_reportType.value}"
             val filename = "${title}.md"
             repository.saveReport(filename, content)
+            _currentReport.value = cur?.copy(title = title, filename = filename) ?: ReportDocument(
+                title = title,
+                startDate = _reportStartDate.value,
+                endDate = _reportEndDate.value,
+                reportType = _reportType.value,
+                content = content,
+                filename = filename
+            )
             loadSavedReports()
             showSnack("报告已保存为 $filename")
         }
@@ -376,8 +410,17 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 if (res.isSuccess) {
                     val reportContent = res.getOrDefault("")
                     _generatedReportMarkdown.value = reportContent
+                    val title = "${actualStart}_至_${actualEnd}_${reportType}"
+                    val filename = "${title}.md"
+                    _currentReport.value = ReportDocument(
+                        title = title,
+                        startDate = actualStart,
+                        endDate = actualEnd,
+                        reportType = reportType,
+                        content = reportContent,
+                        filename = filename
+                    )
                     // Auto save the generated report
-                    val filename = "${actualStart}_至_${actualEnd}_${reportType}.md"
                     repository.saveReport(filename, reportContent)
                     loadSavedReports()
                     showSnack("周期工作报告已生成并自动保存！")
@@ -552,7 +595,8 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun importWorkExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
-        viewModelScope.launch {
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
             _isImportingFile.value = true
             try {
                 val finalContent = if (refineWithAi) {
@@ -574,7 +618,8 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun importProjectExperiences(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
-        viewModelScope.launch {
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
             _isImportingFile.value = true
             try {
                 val finalContent = if (refineWithAi) {
@@ -596,7 +641,8 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun importCareerProfile(content: String, sourceFileName: String, refineWithAi: Boolean = false) {
-        viewModelScope.launch {
+        activeAiJob?.cancel()
+        activeAiJob = viewModelScope.launch {
             _isImportingFile.value = true
             try {
                 val finalContent = if (refineWithAi) {
@@ -739,6 +785,7 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun clearAllData() {
+        cancelActiveAiJob()
         viewModelScope.launch {
             try {
                 repository.clearAllData()
@@ -747,7 +794,14 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 _editingProfileText.value = null
                 _editingWorkExpText.value = null
                 _editingProjectExpText.value = null
+                _generatedReportMarkdown.value = ""
+                _currentReport.value = null
+                _savedReportFiles.value = emptyList()
+                _searchResults.value = emptyList()
+                _searchQuery.value = ""
+                _lastDeletedTodo.value = null
                 loadMdInfo()
+                loadSavedReports()
                 showSnack("所有记录的数据已清空")
             } catch (e: Exception) {
                 showSnack("清空失败: ${e.message}")

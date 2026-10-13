@@ -13,9 +13,13 @@ object AISafetyManager {
         if (input.isBlank()) return ""
         val truncated = if (input.length > maxLength) input.take(maxLength) + "\n...[内容超出最大字符限制，自动截断]" else input
         
+        val tagsToEscape = linkedSetOf(tagName, "user_raw_content", "user_work_records")
         var clean = truncated
-            .replace("<$tagName>", "&lt;$tagName&gt;")
-            .replace("</$tagName>", "&lt;/$tagName&gt;")
+        for (tag in tagsToEscape) {
+            clean = clean
+                .replace("<$tag>", "&lt;$tag&gt;")
+                .replace("</$tag>", "&lt;/$tag&gt;")
+        }
 
         return clean.trim()
     }

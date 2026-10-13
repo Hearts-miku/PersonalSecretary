@@ -4,13 +4,19 @@ import com.example.data.local.DailyWorkLogEntity
 import com.example.data.local.UserSettingsEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * 统一的 AI 模型调用与提示词处理仓库。
@@ -130,7 +136,22 @@ class AiRepository {
         }
     }
 
-    private fun callOpenAiApi(
+    private suspend fun Call.awaitResponse(): Response = kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation {
+            cancel()
+        }
+        enqueue(object : Callback {
+            override fun onResponse(call: Call, response: Response) {
+                continuation.resume(response)
+            }
+            override fun onFailure(call: Call, e: IOException) {
+                if (continuation.isCancelled) return
+                continuation.resumeWithException(e)
+            }
+        })
+    }
+
+    private suspend fun callOpenAiApi(
         endpoint: String,
         apiKey: String,
         model: String,
@@ -164,10 +185,16 @@ class AiRepository {
             .post(body)
             .build()
 
-        client.newCall(httpRequest).execute().use { response ->
-            val responseStr = response.body?.string() ?: ""
-            if (!response.isSuccessful) {
-                val errorMsg = parseErrorMessage(responseStr, response.code)
+        val response = try {
+            client.newCall(httpRequest).awaitResponse()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+
+        return response.use { resp ->
+            val responseStr = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                val errorMsg = parseErrorMessage(responseStr, resp.code)
                 return Result.failure(Exception(errorMsg))
             }
 
@@ -185,7 +212,7 @@ class AiRepository {
                     return Result.success(content)
                 }
             }
-            return Result.failure(Exception("AI 未返回有效内容"))
+            Result.failure(Exception("AI 未返回有效内容"))
         }
     }
 
@@ -268,7 +295,7 @@ class AiRepository {
         """.trimIndent()
 
         val res = generateContent(prompt, systemInst, settings)
-        return res.map { jsonStr ->
+        return res.mapCatching { jsonStr ->
             parseTodosFromJson(jsonStr)
         }
     }
@@ -480,7 +507,7 @@ class AiRepository {
         """.trimIndent()
 
         val res = generateContent(prompt, systemInst, settings)
-        return res.map { jsonStr ->
+        return res.mapCatching { jsonStr ->
             parseSearchResultsFromJson(jsonStr)
         }
     }
@@ -542,48 +569,40 @@ class AiRepository {
     private fun parseSearchResultsFromJson(jsonStr: String): List<SemanticSearchResult> {
         val list = mutableListOf<SemanticSearchResult>()
         val dateRegex = Regex("""^\d{4}-\d{2}-\d{2}$""")
-        try {
-            val cleanJson = extractJsonSubstring(jsonStr)
-            val jsonArray = JSONArray(cleanJson)
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val date = obj.optString("date", "")
-                val score = obj.optInt("relevanceScore", 50)
-                val reason = obj.optString("matchReason", "")
-                val snippet = obj.optString("snippet", "")
-                if (date.isNotBlank() && dateRegex.matches(date)) {
-                    list.add(SemanticSearchResult(date, score, reason, snippet))
-                }
+        val cleanJson = extractJsonSubstring(jsonStr)
+        val jsonArray = JSONArray(cleanJson)
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.getJSONObject(i)
+            val date = obj.optString("date", "")
+            val score = obj.optInt("relevanceScore", 50)
+            val reason = obj.optString("matchReason", "")
+            val snippet = obj.optString("snippet", "")
+            if (date.isNotBlank() && dateRegex.matches(date)) {
+                list.add(SemanticSearchResult(date, score, reason, snippet))
             }
-        } catch (e: Exception) {
-            // Ignore parse error
         }
         return list.sortedByDescending { it.relevanceScore }
     }
 
     private fun parseTodosFromJson(jsonStr: String): List<ExtractedTodo> {
         val list = mutableListOf<ExtractedTodo>()
-        try {
-            val cleanJson = extractJsonSubstring(jsonStr)
-            val jsonArray = JSONArray(cleanJson)
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val rawTitle = obj.optString("title", "未命名任务").trim()
-                val desc = obj.optString("description", "").trim()
-                val priority = obj.optString("priority", "MEDIUM").uppercase()
-                val rawCategory = obj.optString("category", "通用项目").trim().ifBlank { "通用项目" }
+        val cleanJson = extractJsonSubstring(jsonStr)
+        val jsonArray = JSONArray(cleanJson)
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.getJSONObject(i)
+            val rawTitle = obj.optString("title", "未命名任务").trim()
+            val desc = obj.optString("description", "").trim()
+            val priority = obj.optString("priority", "MEDIUM").uppercase()
+            val rawCategory = obj.optString("category", "通用项目").trim().ifBlank { "通用项目" }
 
-                // 规范化标题：确保在有明确项目名称时突出展示【项目名称】
-                val finalTitle = if (!rawTitle.startsWith("【") && rawCategory.isNotBlank() && rawCategory != "工作" && rawCategory != "Work") {
-                    "【$rawCategory】$rawTitle"
-                } else {
-                    rawTitle
-                }
-
-                list.add(ExtractedTodo(finalTitle, desc, priority, rawCategory))
+            // 规范化标题：确保在有明确项目名称时突出展示【项目名称】
+            val finalTitle = if (!rawTitle.startsWith("【") && rawCategory.isNotBlank() && rawCategory != "工作" && rawCategory != "Work") {
+                "【$rawCategory】$rawTitle"
+            } else {
+                rawTitle
             }
-        } catch (e: Exception) {
-            // Ignore parse errors, return empty list
+
+            list.add(ExtractedTodo(finalTitle, desc, priority, rawCategory))
         }
         return list
     }
@@ -674,9 +693,9 @@ class AiRepository {
             报告类型: $reportType
             
             以下是用户在该时间区间内记录的日常工作日志总结与笔记：
-            <user_work_records>
+            <user_raw_content>
             $cleanLogs
-            </user_work_records>
+            </user_raw_content>
 
             请基于上述时间段内的全部工作记录，提炼并生成一份结构严谨、数据详实、适合向上级或团队汇报的专业工作总结报告（Markdown格式）。
             

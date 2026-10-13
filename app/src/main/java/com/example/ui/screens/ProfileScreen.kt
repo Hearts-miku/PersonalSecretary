@@ -8,6 +8,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -83,45 +86,73 @@ fun ProfileScreen(
     var pendingImportFileName by remember { mutableStateOf("") }
     var showImportTypeDialog by remember { mutableStateOf(false) }
 
+    val scope = rememberCoroutineScope()
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            try {
-                var fileName = "imported_file.txt"
-                var fileSize: Long? = null
-                if (uri.scheme == "content") {
-                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                            if (nameIdx != -1) fileName = cursor.getString(nameIdx)
-                            val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
-                            if (sizeIdx != -1 && !cursor.isNull(sizeIdx)) {
-                                fileSize = cursor.getLong(sizeIdx)
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    var fileName = "imported_file.txt"
+                    var fileSize: Long? = null
+                    if (uri.scheme == "content") {
+                        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (nameIdx != -1) fileName = cursor.getString(nameIdx)
+                                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                                if (sizeIdx != -1 && !cursor.isNull(sizeIdx)) {
+                                    fileSize = cursor.getLong(sizeIdx)
+                                }
                             }
                         }
                     }
-                }
-                if (fileSize != null && fileSize!! > 1024 * 1024) {
-                    viewModel.showSnack("文件体积过大（超过 1MB），请上传较小的纯文本/Markdown 文件")
-                    return@let
-                }
+                    if (fileSize != null && fileSize!! > 1024 * 1024) {
+                        viewModel.showSnack("文件体积过大（超过 1MB），请上传较小的纯文本/Markdown 文件")
+                        return@launch
+                    }
 
-                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
-                if (text.length > 100_000) {
-                    viewModel.showSnack("文件内容过长（超过 10 万字），请适当精简后导入")
-                    return@let
-                }
+                    // Bounded stream reading on IO thread (P2-13)
+                    val stream = context.contentResolver.openInputStream(uri)
+                    if (stream == null) {
+                        viewModel.showSnack("无法打开所选文件")
+                        return@launch
+                    }
+                    val buffer = CharArray(2048)
+                    val sb = StringBuilder()
+                    val reader = stream.bufferedReader()
+                    var totalChars = 0
+                    val maxChars = 100_000
+                    var exceeded = false
+                    reader.use { r ->
+                        var read: Int
+                        while (r.read(buffer).also { read = it } != -1) {
+                            totalChars += read
+                            if (totalChars > maxChars) {
+                                exceeded = true
+                                break
+                            }
+                            sb.append(buffer, 0, read)
+                        }
+                    }
+                    if (exceeded) {
+                        viewModel.showSnack("文件内容过长（超过 10 万字），请适当精简后导入")
+                        return@launch
+                    }
 
-                if (text.isNotBlank()) {
-                    pendingImportContent = text
-                    pendingImportFileName = fileName
-                    showImportTypeDialog = true
-                } else {
-                    viewModel.showSnack("文件内容为空，请重新选择有效的 .txt 或 .md 文件")
+                    val text = sb.toString()
+                    if (text.isNotBlank()) {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            pendingImportContent = text
+                            pendingImportFileName = fileName
+                            showImportTypeDialog = true
+                        }
+                    } else {
+                        viewModel.showSnack("文件内容为空，请重新选择有效的 .txt 或 .md 文件")
+                    }
+                } catch (e: Exception) {
+                    viewModel.showSnack("文件读取失败: ${e.localizedMessage}")
                 }
-            } catch (e: Exception) {
-                viewModel.showSnack("文件读取失败: ${e.localizedMessage}")
             }
         }
     }

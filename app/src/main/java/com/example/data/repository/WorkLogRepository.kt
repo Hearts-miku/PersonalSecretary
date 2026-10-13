@@ -172,15 +172,32 @@ class WorkLogRepository(private val context: Context) {
                 return@withContext Result.failure(Exception("AI 返回的总结为空，本次提炼中断。"))
             }
 
-            // Write to Type 1 MD File (worklogs/YYYY-MM-DD.md) & Update Room atomically (N-22 & N-24)
+            // Write to Type 1 MD File (worklogs/YYYY-MM-DD.md) & Update Room with version coordination (N-37)
+            var hasConcurrentNotes = false
             withContext(NonCancellable) {
                 markdownManager.writeDailySummary(targetDate, summaryMarkdown)
+                
+                // N-37: Check if concurrent notes were added to Room while waiting for AI response
+                val currentEntity = logDao.getLogByDate(targetDate)
+                val currentRaw = currentEntity?.rawNotes.orEmpty()
+                hasConcurrentNotes = currentRaw.isNotBlank() && currentRaw != rawContent
+
+                val remainingRaw = if (hasConcurrentNotes) {
+                    if (currentRaw.startsWith(rawContent)) {
+                        currentRaw.substring(rawContent.length).trim().removePrefix("•").trim()
+                    } else {
+                        currentRaw
+                    }
+                } else {
+                    if (isInputFromSummary) logEntity?.rawNotes.orEmpty() else ""
+                }
+
                 logDao.insertOrUpdate(
                     DailyWorkLogEntity(
                         date = targetDate,
-                        rawNotes = if (isInputFromSummary) logEntity?.rawNotes.orEmpty() else rawContent,
+                        rawNotes = remainingRaw,
                         summaryMarkdown = summaryMarkdown,
-                        isSummarized = true,
+                        isSummarized = !hasConcurrentNotes,
                         updatedAt = System.currentTimeMillis()
                     )
                 )
@@ -244,10 +261,14 @@ class WorkLogRepository(private val context: Context) {
                 onProgress("⚠️ AI 未能处理职业履历评估，已跳过")
             }
 
-            // 4. Clear Type 2 temp raw notes for target date only
+            // 4. Clear Type 2 temp raw notes for target date (preserving newly added notes if concurrent, N-37)
             onProgress("整理完毕，正在清理临时原始输入文档...")
             withContext(NonCancellable) {
-                markdownManager.removeRawNotesForDate(targetDate)
+                if (hasConcurrentNotes) {
+                    markdownManager.removeRawNotesForDate(targetDate, rawContent)
+                } else {
+                    markdownManager.removeRawNotesForDate(targetDate)
+                }
             }
 
             Result.success("【$targetDate】AI 工作日志整理完成！已更新总结、待办列表与职业文档。")
@@ -273,19 +294,41 @@ class WorkLogRepository(private val context: Context) {
         val sb = StringBuilder()
         val maxChars = 25000
         var currentChars = 0
+        var hasFactContent = false
 
         for (log in logs) {
-            val content = when {
+            // N-31: If entry has summary and supplementary unsummarized raw notes, include both!
+            val rawContent = when {
+                log.isSummarized && log.summaryMarkdown.isNotBlank() && log.rawNotes.isBlank() -> log.summaryMarkdown
+                log.summaryMarkdown.isNotBlank() && log.rawNotes.isNotBlank() -> {
+                    "${log.summaryMarkdown}\n\n#### 【当日补录待整理记录】\n${log.rawNotes}"
+                }
                 log.summaryMarkdown.isNotBlank() -> log.summaryMarkdown
                 else -> log.rawNotes
             }
-            val entry = "### 日期: ${log.date}\n$content\n"
+
+            if (rawContent.isBlank()) continue
+
+            // N-32: Truncate oversized single entries so one huge entry does not crowd out subsequent entries
+            val maxPerEntry = 5000
+            val truncated = if (rawContent.length > maxPerEntry) {
+                rawContent.take(maxPerEntry) + "\n...[单篇内容较长，已截取前${maxPerEntry}字]"
+            } else {
+                rawContent
+            }
+
+            val entry = "### 日期: ${log.date}\n$truncated\n"
             if (currentChars + entry.length > maxChars) {
                 sb.append("...[超出上下文长度上限，已选取前序主要日志进行总结]\n")
                 break
             }
             sb.append(entry).append("\n")
             currentChars += entry.length
+            hasFactContent = true
+        }
+
+        if (!hasFactContent || sb.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("在选定区间内未提取到有效事实工作记录，无法生成报告。"))
         }
 
         val settings = getSettings()
@@ -593,7 +636,87 @@ class WorkLogRepository(private val context: Context) {
     }
 
     suspend fun exportDataToZip(outputStream: java.io.OutputStream) = withContext(Dispatchers.IO) {
-        markdownManager.exportAllDataToZip(outputStream)
+        val allLogs = logDao.getAllLogsOnce()
+        val allTodos = todoDao.getAllTodosOnce()
+        val allVersions = versionDao.getAllVersionsOnce()
+        val userProfile = profileDao.getProfile()
+
+        java.util.zip.ZipOutputStream(outputStream).use { zos ->
+            // 1. Export physical Markdown documents
+            val baseDir = java.io.File(context.filesDir, "markdown_records")
+            if (baseDir.exists()) {
+                baseDir.walkTopDown().filter { it.isFile }.forEach { file ->
+                    val relativePath = "documents/" + file.relativeTo(baseDir).path.replace('\\', '/')
+                    if (!relativePath.contains("..")) {
+                        val zipEntry = java.util.zip.ZipEntry(relativePath)
+                        zos.putNextEntry(zipEntry)
+                        file.inputStream().use { it.copyTo(zos) }
+                        zos.closeEntry()
+                    }
+                }
+            }
+
+            // 2. Export database JSON archives (N-34: todos, logs, versions, profile; excludes sensitive API keys)
+            fun writeJsonEntry(entryPath: String, jsonContent: String) {
+                val zipEntry = java.util.zip.ZipEntry(entryPath)
+                zos.putNextEntry(zipEntry)
+                zos.write(jsonContent.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
+
+            val logsJson = org.json.JSONArray().apply {
+                for (item in allLogs) {
+                    put(org.json.JSONObject().apply {
+                        put("date", item.date)
+                        put("rawNotes", item.rawNotes)
+                        put("summaryMarkdown", item.summaryMarkdown)
+                        put("isSummarized", item.isSummarized)
+                        put("updatedAt", item.updatedAt)
+                    })
+                }
+            }.toString(2)
+            writeJsonEntry("database_backup/daily_work_logs.json", logsJson)
+
+            val todosJson = org.json.JSONArray().apply {
+                for (item in allTodos) {
+                    put(org.json.JSONObject().apply {
+                        put("id", item.id)
+                        put("title", item.title)
+                        put("description", item.description)
+                        put("isCompleted", item.isCompleted)
+                        put("priority", item.priority)
+                        put("category", item.category)
+                        put("dateCreated", item.dateCreated)
+                        put("sourceLogDate", item.sourceLogDate)
+                    })
+                }
+            }.toString(2)
+            writeJsonEntry("database_backup/todo_items.json", todosJson)
+
+            val versionsJson = org.json.JSONArray().apply {
+                for (item in allVersions) {
+                    put(org.json.JSONObject().apply {
+                        put("id", item.id)
+                        put("type", item.type)
+                        put("content", item.content)
+                        put("timestamp", item.timestamp)
+                        put("summaryNote", item.summaryNote)
+                    })
+                }
+            }.toString(2)
+            writeJsonEntry("database_backup/experience_versions.json", versionsJson)
+
+            if (userProfile != null) {
+                val profileJson = org.json.JSONObject().apply {
+                    put("id", userProfile.id)
+                    put("markdownContent", userProfile.markdownContent)
+                    put("workExperiences", userProfile.workExperiences)
+                    put("projectExperiences", userProfile.projectExperiences)
+                    put("lastUpdated", userProfile.lastUpdated)
+                }.toString(2)
+                writeJsonEntry("database_backup/user_career_profile.json", profileJson)
+            }
+        }
     }
 
     suspend fun getMarkdownDirectoryInfo(): Map<String, String> = withContext(Dispatchers.IO) {

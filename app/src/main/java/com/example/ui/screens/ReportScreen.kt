@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -47,6 +48,7 @@ import java.util.TimeZone
 @Composable
 fun ReportScreen(viewModel: WorkLogViewModel) {
     val context = LocalContext.current
+    val currentDoc by viewModel.currentReport.collectAsState()
     val startDate by viewModel.reportStartDate.collectAsState()
     val endDate by viewModel.reportEndDate.collectAsState()
     val reportType by viewModel.reportType.collectAsState()
@@ -56,6 +58,7 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
     val savedFiles by viewModel.savedReportFiles.collectAsState()
     val allLogs by viewModel.allLogs.collectAsState()
 
+    val scope = rememberCoroutineScope()
     var showStartDatePicker by rememberSaveable { mutableStateOf(false) }
     var showEndDatePicker by rememberSaveable { mutableStateOf(false) }
     var showCustomSaveDialog by rememberSaveable { mutableStateOf(false) }
@@ -69,13 +72,21 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
         contract = ActivityResultContracts.CreateDocument("text/markdown")
     ) { uri ->
         if (uri != null) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                    outputStream.write(pendingDownloadContent.toByteArray(Charsets.UTF_8))
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val stream = context.contentResolver.openOutputStream(uri)
+                    if (stream == null) {
+                        viewModel.showSnack("下载失败：无法创建文件输出流")
+                        return@launch
+                    }
+                    stream.use { outputStream ->
+                        outputStream.write(pendingDownloadContent.toByteArray(Charsets.UTF_8))
+                        outputStream.flush()
+                    }
+                    viewModel.showSnack("报告下载成功！已保存到指定位置")
+                } catch (e: Exception) {
+                    viewModel.showSnack("下载失败: ${e.localizedMessage ?: "未知错误"}")
                 }
-                viewModel.showSnack("报告下载成功！已保存到指定位置")
-            } catch (e: Exception) {
-                viewModel.showSnack("下载失败: ${e.localizedMessage ?: "未知错误"}")
             }
         }
     }
@@ -611,7 +622,8 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
                             // Download Report Button (Export to device storage)
                             IconButton(
                                 onClick = {
-                                    downloadFileName = "${startDate}_至_${endDate}_$reportType"
+                                    val boundTitle = currentDoc?.title?.ifBlank { null } ?: "${startDate}_至_${endDate}_$reportType"
+                                    downloadFileName = boundTitle
                                     pendingDownloadContent = generatedReport
                                     showDownloadDialog = true
                                 },
@@ -639,7 +651,8 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
                             }
                             IconButton(
                                 onClick = {
-                                    customSaveTitle = "${startDate}_至_${endDate}_$reportType"
+                                    val boundTitle = currentDoc?.title?.ifBlank { null } ?: "${startDate}_至_${endDate}_$reportType"
+                                    customSaveTitle = boundTitle
                                     showCustomSaveDialog = true
                                 },
                                 modifier = Modifier.testTag("save_report_button")
@@ -652,9 +665,10 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
                             }
                             IconButton(
                                 onClick = {
+                                    val boundTitle = currentDoc?.title?.ifBlank { null } ?: "${startDate}至${endDate} $reportType"
                                     val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                        putExtra(Intent.EXTRA_TITLE, "${startDate}至${endDate} $reportType")
-                                        putExtra(Intent.EXTRA_SUBJECT, "${startDate}至${endDate} $reportType")
+                                        putExtra(Intent.EXTRA_TITLE, boundTitle)
+                                        putExtra(Intent.EXTRA_SUBJECT, boundTitle)
                                         putExtra(Intent.EXTRA_TEXT, generatedReport)
                                         type = "text/plain"
                                     }
