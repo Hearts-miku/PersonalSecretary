@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "WorkShorthand"
+rootProject.name = "WorkNotes"
 
 include(":app")

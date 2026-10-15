@@ -114,6 +114,16 @@ class MarkdownFileManager(private val context: Context) {
             ?.sortedByDescending { it.lastModified() } ?: emptyList()
     }
 
+    fun deleteReport(filename: String): Boolean {
+        val safeName = sanitizeReportFileName(filename)
+        val file = File(reportsDir, safeName)
+        return if (file.exists()) {
+            file.delete()
+        } else {
+            false
+        }
+    }
+
     private val rawNotesLock = Any()
 
     // --- Type 2: Raw Notes Document (temp/raw_notes.md) ---

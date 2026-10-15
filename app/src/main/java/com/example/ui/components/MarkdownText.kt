@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,70 +45,41 @@ fun MarkdownText(
     val privacyFg = MaterialTheme.colorScheme.onTertiaryContainer
     val linkFg = MaterialTheme.colorScheme.primary
 
+    val blocks = remember(markdown, codeBg, codeFg, privacyBg, privacyFg, linkFg) {
+        parseMarkdownLines(markdown, codeBg, codeFg, privacyBg, privacyFg, linkFg)
+    }
+
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        val lines = markdown.lines()
-        var inCodeBlock = false
-        val codeBuffer = StringBuilder()
-
-        lines.forEach { line ->
-            val trimmed = line.trim()
-
-            if (trimmed.startsWith("```")) {
-                if (inCodeBlock) {
-                    // Render accumulated code block
-                    CodeBlockView(codeBuffer.toString())
-                    codeBuffer.clear()
-                    inCodeBlock = false
-                } else {
-                    inCodeBlock = true
-                }
-                return@forEach
-            }
-
-            if (inCodeBlock) {
-                codeBuffer.append(line).append("\n")
-                return@forEach
-            }
-
-            when {
-                trimmed.startsWith("# ") -> {
-                    Text(
-                        text = parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg, linkFg),
-                        style = MaterialTheme.typography.headlineMedium.copy(
+        blocks.forEach { block ->
+            when (block) {
+                is MarkdownBlock.Header -> {
+                    val style = when (block.level) {
+                        1 -> MaterialTheme.typography.headlineMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                    )
-                }
-                trimmed.startsWith("## ") -> {
-                    Text(
-                        text = parseInlineMarkdown(trimmed.substring(3), codeBg, codeFg, privacyBg, privacyFg, linkFg),
-                        style = MaterialTheme.typography.titleLarge.copy(
+                        )
+                        2 -> MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.secondary
-                        ),
-                        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
-                    )
-                }
-                trimmed.startsWith("### ") -> {
-                    Text(
-                        text = parseInlineMarkdown(trimmed.substring(4), codeBg, codeFg, privacyBg, privacyFg, linkFg),
-                        style = MaterialTheme.typography.titleMedium.copy(
+                        )
+                        else -> MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.tertiary
-                        ),
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                        )
+                    }
+                    val pad = when (block.level) {
+                        1 -> Modifier.padding(top = 8.dp, bottom = 4.dp)
+                        2 -> Modifier.padding(top = 6.dp, bottom = 2.dp)
+                        else -> Modifier.padding(top = 4.dp)
+                    }
+                    Text(text = block.text, style = style, modifier = pad)
                 }
-                trimmed.startsWith("> ") -> {
-                    BlockQuoteView(parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg, linkFg))
-                }
-                trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("• ") -> {
-                    val content = trimmed.substring(2)
+                is MarkdownBlock.BlockQuote -> BlockQuoteView(block.text)
+                is MarkdownBlock.CodeBlock -> CodeBlockView(block.code)
+                is MarkdownBlock.ListItem -> {
                     Row(
                         modifier = Modifier.padding(start = 8.dp, top = 2.dp),
                         verticalAlignment = Alignment.Top
@@ -119,18 +91,16 @@ fun MarkdownText(
                             style = MaterialTheme.typography.bodyLarge
                         )
                         Text(
-                            text = parseInlineMarkdown(content, codeBg, codeFg, privacyBg, privacyFg, linkFg),
+                            text = block.text,
                             style = MaterialTheme.typography.bodyMedium,
                             color = textColor
                         )
                     }
                 }
-                trimmed.isBlank() -> {
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
-                else -> {
+                is MarkdownBlock.SpacerBlock -> Spacer(modifier = Modifier.height(4.dp))
+                is MarkdownBlock.Paragraph -> {
                     Text(
-                        text = parseInlineMarkdown(line, codeBg, codeFg, privacyBg, privacyFg, linkFg),
+                        text = block.text,
                         style = MaterialTheme.typography.bodyMedium,
                         color = textColor,
                         lineHeight = 22.sp
@@ -138,11 +108,77 @@ fun MarkdownText(
                 }
             }
         }
+    }
+}
 
-        if (inCodeBlock && codeBuffer.isNotEmpty()) {
-            CodeBlockView(codeBuffer.toString())
+private sealed class MarkdownBlock {
+    data class Header(val level: Int, val text: AnnotatedString) : MarkdownBlock()
+    data class BlockQuote(val text: AnnotatedString) : MarkdownBlock()
+    data class CodeBlock(val code: String) : MarkdownBlock()
+    data class ListItem(val text: AnnotatedString) : MarkdownBlock()
+    data class Paragraph(val text: AnnotatedString) : MarkdownBlock()
+    object SpacerBlock : MarkdownBlock()
+}
+
+private fun parseMarkdownLines(
+    markdown: String,
+    codeBg: Color,
+    codeFg: Color,
+    privacyBg: Color,
+    privacyFg: Color,
+    linkFg: Color
+): List<MarkdownBlock> {
+    val lines = markdown.lines()
+    val blocks = ArrayList<MarkdownBlock>(lines.size)
+    var inCodeBlock = false
+    val codeBuffer = StringBuilder()
+
+    for (line in lines) {
+        val trimmed = line.trim()
+        if (trimmed.startsWith("```")) {
+            if (inCodeBlock) {
+                blocks.add(MarkdownBlock.CodeBlock(codeBuffer.toString()))
+                codeBuffer.clear()
+                inCodeBlock = false
+            } else {
+                inCodeBlock = true
+            }
+            continue
+        }
+
+        if (inCodeBlock) {
+            codeBuffer.append(line).append("\n")
+            continue
+        }
+
+        when {
+            trimmed.startsWith("# ") -> {
+                blocks.add(MarkdownBlock.Header(1, parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg, linkFg)))
+            }
+            trimmed.startsWith("## ") -> {
+                blocks.add(MarkdownBlock.Header(2, parseInlineMarkdown(trimmed.substring(3), codeBg, codeFg, privacyBg, privacyFg, linkFg)))
+            }
+            trimmed.startsWith("### ") -> {
+                blocks.add(MarkdownBlock.Header(3, parseInlineMarkdown(trimmed.substring(4), codeBg, codeFg, privacyBg, privacyFg, linkFg)))
+            }
+            trimmed.startsWith("> ") -> {
+                blocks.add(MarkdownBlock.BlockQuote(parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg, linkFg)))
+            }
+            trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("• ") -> {
+                blocks.add(MarkdownBlock.ListItem(parseInlineMarkdown(trimmed.substring(2), codeBg, codeFg, privacyBg, privacyFg, linkFg)))
+            }
+            trimmed.isBlank() -> {
+                blocks.add(MarkdownBlock.SpacerBlock)
+            }
+            else -> {
+                blocks.add(MarkdownBlock.Paragraph(parseInlineMarkdown(line, codeBg, codeFg, privacyBg, privacyFg, linkFg)))
+            }
         }
     }
+    if (inCodeBlock && codeBuffer.isNotEmpty()) {
+        blocks.add(MarkdownBlock.CodeBlock(codeBuffer.toString()))
+    }
+    return blocks
 }
 
 @Composable

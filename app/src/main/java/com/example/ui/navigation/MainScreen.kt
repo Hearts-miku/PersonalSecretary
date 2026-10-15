@@ -71,10 +71,20 @@ fun MainScreen(viewModel: WorkLogViewModel = viewModel()) {
                 )
             }
             composable(Screen.Timeline.route) {
-                TimelineScreen(viewModel = viewModel)
+                TimelineScreen(
+                    viewModel = viewModel,
+                    onNavigateToReport = {
+                        navController.navigate(Screen.Report.route)
+                    }
+                )
             }
             composable(Screen.Report.route) {
-                ReportScreen(viewModel = viewModel)
+                ReportScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
             }
             composable(Screen.TodoList.route) {
                 TodoListScreen(viewModel = viewModel)

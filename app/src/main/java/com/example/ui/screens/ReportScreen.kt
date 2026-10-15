@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,12 +17,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
@@ -46,7 +49,13 @@ import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReportScreen(viewModel: WorkLogViewModel) {
+fun ReportScreen(
+    viewModel: WorkLogViewModel,
+    onNavigateBack: (() -> Unit)? = null
+) {
+    if (onNavigateBack != null) {
+        BackHandler { onNavigateBack() }
+    }
     val context = LocalContext.current
     val currentDoc by viewModel.currentReport.collectAsState()
     val startDate by viewModel.reportStartDate.collectAsState()
@@ -66,6 +75,8 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
     var showDownloadDialog by rememberSaveable { mutableStateOf(false) }
     var downloadFileName by rememberSaveable { mutableStateOf("") }
     var pendingDownloadContent by rememberSaveable { mutableStateOf("") }
+    var showDeleteReportDialog by rememberSaveable { mutableStateOf(false) }
+    var reportPendingDelete by remember { mutableStateOf<java.io.File?>(null) }
 
     // Android Storage Access Framework (SAF) document export launcher for downloading/saving file
     val exportDocumentLauncher = rememberLauncherForActivityResult(
@@ -227,6 +238,54 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
         )
     }
 
+    // Delete Report Confirmation Dialog
+    if (showDeleteReportDialog && reportPendingDelete != null) {
+        val file = reportPendingDelete!!
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteReportDialog = false
+                reportPendingDelete = null
+            },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = { Text("删除报告文档") },
+            text = {
+                Text(
+                    text = "确定要删除已生成的总结报告【${file.nameWithoutExtension}】吗？删除后文件将被移除且无法恢复。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteReport(file.name)
+                        showDeleteReportDialog = false
+                        reportPendingDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_report_btn")
+                ) {
+                    Text("确定删除", color = MaterialTheme.colorScheme.onError)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteReportDialog = false
+                        reportPendingDelete = null
+                    }
+                ) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -242,6 +301,19 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onNavigateBack != null) {
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.testTag("report_back_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回时间线",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
                 Icon(
                     imageVector = Icons.Default.Assessment,
                     contentDescription = "总结报告",
@@ -563,7 +635,8 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         items(savedFiles) { file ->
-                            SuggestionChip(
+                            InputChip(
+                                selected = currentDoc?.filename == file.name || currentDoc?.title == file.nameWithoutExtension,
                                 onClick = { viewModel.selectSavedReport(file) },
                                 label = {
                                     Text(
@@ -571,13 +644,32 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
                                         style = MaterialTheme.typography.labelMedium
                                     )
                                 },
-                                icon = {
+                                leadingIcon = {
                                     Icon(
                                         imageVector = Icons.Default.Description,
                                         contentDescription = "文件",
                                         modifier = Modifier.size(16.dp)
                                     )
-                                }
+                                },
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = {
+                                            reportPendingDelete = file
+                                            showDeleteReportDialog = true
+                                        },
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .testTag("delete_chip_${file.nameWithoutExtension}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "删除报告",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("saved_report_chip_${file.nameWithoutExtension}")
                             )
                         }
                     }
@@ -616,7 +708,7 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
                         )
                     }
 
-                    // Action Buttons (Download, Copy, Save, Share)
+                    // Action Buttons (Download, Copy, Save, Share, Delete)
                     if (generatedReport.isNotBlank()) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             // Download Report Button (Export to device storage)
@@ -681,6 +773,22 @@ fun ReportScreen(viewModel: WorkLogViewModel) {
                                     imageVector = Icons.Default.Share,
                                     contentDescription = "分享报告",
                                     tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    val targetFilename = currentDoc?.filename ?: "${currentDoc?.title ?: ""}.md"
+                                    val foundFile = savedFiles.firstOrNull { it.name == targetFilename || it.nameWithoutExtension == currentDoc?.title }
+                                        ?: java.io.File(targetFilename)
+                                    reportPendingDelete = foundFile
+                                    showDeleteReportDialog = true
+                                },
+                                modifier = Modifier.testTag("delete_report_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "删除报告",
+                                    tint = MaterialTheme.colorScheme.error
                                 )
                             }
                         }

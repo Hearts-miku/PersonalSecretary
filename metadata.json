@@ -1,5 +1,5 @@
 {
-  "name": "工作速记",
+  "name": "工作随记",
   "description": "记录每天工作内容，AI自动整理日历时间线与待办事项，Markdown文档存储，并智能生成用户简历。",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

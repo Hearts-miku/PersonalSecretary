@@ -223,4 +223,22 @@ class WorkLogRepositoryAuditTest {
             assertTrue("Must include day $i facts", prompt.contains("模块$i 事实记录"))
         }
     }
+
+    @Test
+    fun testDeleteReport_viaRepository() = runBlocking {
+        val filename = "2026-10-01_至_2026-10-07_周报.md"
+        val content = "# 周报详情"
+        repository.saveReport(filename, content)
+
+        val listBefore = repository.getSavedReports()
+        assertEquals(1, listBefore.size)
+        assertEquals(content, repository.getReportContent(filename))
+
+        val deleted = repository.deleteReport(filename)
+        assertTrue(deleted)
+
+        val listAfter = repository.getSavedReports()
+        assertTrue(listAfter.isEmpty())
+        assertNull(repository.getReportContent(filename))
+    }
 }

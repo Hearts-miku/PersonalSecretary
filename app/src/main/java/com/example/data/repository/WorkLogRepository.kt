@@ -328,14 +328,14 @@ class WorkLogRepository(
         }
 
         val sb = StringBuilder()
-        val maxChars = 25000
+        val maxChars = 16000
         var currentChars = 0
         var hasFactContent = false
         val includedDates = mutableListOf<String>()
         var isAnyEntryTruncated = false
 
         // N-32: Dynamic fair budget allocation per entry based on number of logs
-        val maxPerEntry = (maxChars / logs.size).coerceIn(1200, 5000)
+        val maxPerEntry = (maxChars / logs.size).coerceIn(800, 4000)
 
         for (log in logs) {
             // N-31 & N-32: Allocate budget to both summary and supplementary notes
@@ -412,6 +412,10 @@ class WorkLogRepository(
 
     suspend fun getReportContent(filename: String): String? = withContext(Dispatchers.IO) {
         markdownManager.getReport(filename)
+    }
+
+    suspend fun deleteReport(filename: String): Boolean = withContext(Dispatchers.IO) {
+        markdownManager.deleteReport(filename)
     }
 
     suspend fun generateResume(templateStyle: String): Result<String> = withContext(Dispatchers.IO) {
@@ -808,7 +812,10 @@ class WorkLogRepository(
             versionDao.deleteAllVersions()
 
             // Clear files
-            markdownManager.clearAllData()
+            val filesCleared = markdownManager.clearAllData()
+            if (!filesCleared) {
+                throw java.io.IOException("部分本地 Markdown 存储目录未能完全清空或重置")
+            }
         }
     }
 }

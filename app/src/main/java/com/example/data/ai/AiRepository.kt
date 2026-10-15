@@ -66,8 +66,8 @@ open class AiRepository {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
+        .writeTimeout(180, TimeUnit.SECONDS)
         .build()
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -175,6 +175,7 @@ open class AiRepository {
             put("messages", messages)
             if (!model.startsWith("o1") && !model.startsWith("o3")) {
                 put("temperature", 0.2)
+                put("max_tokens", 4096)
             }
         }
 
@@ -203,13 +204,19 @@ open class AiRepository {
             if (choices != null && choices.length() > 0) {
                 val firstChoice = choices.getJSONObject(0)
                 val finishReason = firstChoice.optString("finish_reason", "")
-                if (finishReason == "length") {
-                    return Result.failure(Exception("AI 输出因达到最大 Token 长度限制产生截断"))
-                }
                 val message = firstChoice.optJSONObject("message")
-                val content = message?.optString("content", "") ?: ""
-                if (content.isNotBlank()) {
-                    return Result.success(content)
+                val content = message?.optString("content", "")?.trim().orEmpty()
+                val reasoningContent = message?.optString("reasoning_content", "")?.trim().orEmpty()
+                val effectiveContent = if (content.isNotBlank()) content else reasoningContent
+
+                if (effectiveContent.isNotBlank()) {
+                    if (finishReason == "length") {
+                        return Result.success(effectiveContent + "\n\n> ⚠️ *（提示：受单次模型输出 Token 限制，报告已部分截断，以上为已提炼完整内容）*")
+                    }
+                    return Result.success(effectiveContent)
+                }
+                if (finishReason == "length") {
+                    return Result.failure(Exception("AI 输出因达到最大 Token 长度限制且未返回可用文本"))
                 }
             }
             Result.failure(Exception("AI 未返回有效内容"))

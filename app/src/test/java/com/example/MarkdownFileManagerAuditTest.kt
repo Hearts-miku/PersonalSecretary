@@ -153,4 +153,32 @@ class MarkdownFileManagerAuditTest {
         val raw = manager.getRawNotesContent()
         assertTrue("Second occurrence of identical note must be preserved", raw.contains("fixed bug 123"))
     }
+
+    /**
+     * Test deleteReport functionality:
+     * - Deleting existing report removes it from disk and listReportFiles
+     * - Deleting non-existent report returns false
+     * - Deleting one report does not affect other reports
+     */
+    @Test
+    fun testDeleteReport_removesFileSuccessfully() {
+        val title1 = "2026-10-01_至_2026-10-07_周报.md"
+        val title2 = "2026-10-01_至_2026-10-31_月报.md"
+        manager.writeReport(title1, "# 周报")
+        manager.writeReport(title2, "# 月报")
+
+        assertEquals(2, manager.listReportFiles().size)
+        assertNotNull(manager.getReport(title1))
+
+        val deleteSuccess = manager.deleteReport(title1)
+        assertTrue("deleteReport must return true for existing file", deleteSuccess)
+        assertNull("Deleted report must not be readable", manager.getReport(title1))
+
+        val remainingFiles = manager.listReportFiles()
+        assertEquals(1, remainingFiles.size)
+        assertEquals("月报 must remain intact", "2026-10-01_至_2026-10-31_月报.md", remainingFiles.first().name)
+
+        val deleteAgain = manager.deleteReport(title1)
+        assertFalse("Deleting non-existent report must return false", deleteAgain)
+    }
 }

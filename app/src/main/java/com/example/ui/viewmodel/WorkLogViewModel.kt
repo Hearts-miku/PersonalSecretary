@@ -81,14 +81,13 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     ): Job {
         val previousJob = activeAiJob
         val token = activeJobToken.incrementAndGet()
-        statusSetter?.invoke(true)
-
         val newJob = viewModelScope.launch {
             try {
                 if (previousJob != null && previousJob.isActive) {
                     previousJob.cancelAndJoin()
                 }
                 if (activeJobToken.get() != token) return@launch
+                statusSetter?.invoke(true)
                 block(token)
             } catch (e: CancellationException) {
                 // Cancelled cleanly, do not surface as UI error
@@ -98,9 +97,7 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                     showSnack("任务执行失败: ${e.message}")
                 }
             } finally {
-                if (activeJobToken.get() == token) {
-                    statusSetter?.invoke(false)
-                }
+                statusSetter?.invoke(false)
             }
         }
         activeAiJob = newJob
@@ -412,6 +409,24 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
             )
             loadSavedReports()
             showSnack("报告已保存为 $filename")
+        }
+    }
+
+    fun deleteReport(filename: String) {
+        viewModelScope.launch {
+            val success = repository.deleteReport(filename)
+            if (success) {
+                val cur = _currentReport.value
+                val baseTitle = filename.removeSuffix(".md")
+                if (cur?.filename == filename || cur?.title == baseTitle || cur?.title == filename) {
+                    _currentReport.value = null
+                    _generatedReportMarkdown.value = ""
+                }
+                loadSavedReports()
+                showSnack("报告【$baseTitle】已删除")
+            } else {
+                showSnack("删除失败：报告文档不存在或无法删除")
+            }
         }
     }
 

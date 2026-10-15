@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -12,9 +13,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -32,12 +36,16 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TimelineScreen(viewModel: WorkLogViewModel) {
+fun TimelineScreen(
+    viewModel: WorkLogViewModel,
+    onNavigateToReport: () -> Unit = {}
+) {
     val selectedDate by viewModel.selectedDate.collectAsState()
     val allLogs by viewModel.allLogs.collectAsState()
     val selectedDateLog by viewModel.selectedDateLog.collectAsState()
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
     val aiStatusMessage by viewModel.aiStatusMessage.collectAsState()
+    val savedReportFiles by viewModel.savedReportFiles.collectAsState()
 
     val searchQuery by viewModel.searchQuery.collectAsState()
     val isSearchingLogs by viewModel.isSearchingLogs.collectAsState()
@@ -83,6 +91,21 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                     color = MaterialTheme.colorScheme.onBackground
                 )
             }
+
+            // Top Header Entrance Button for Summary Report
+            FilledTonalButton(
+                onClick = onNavigateToReport,
+                modifier = Modifier.testTag("timeline_top_report_btn"),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Assessment,
+                    contentDescription = "总结报告",
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("总结报告", style = MaterialTheme.typography.labelMedium)
+            }
         }
 
         if (isProcessingAI) {
@@ -92,6 +115,99 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary
             )
+        }
+
+        // --- Summary Report Entrance & Quick Generate Card ---
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("timeline_report_card"),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Assessment,
+                                    contentDescription = "工作总结报告",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "工作总结报告",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                if (savedReportFiles.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            text = "已存${savedReportFiles.size}篇",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = "基于时间线日常日志，自动AI提炼周期周报、月报或阶段汇报",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // Single Action Button: Jump directly to report center
+                Button(
+                    onClick = onNavigateToReport,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("timeline_generate_report_btn"),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 11.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = "生成总结报告",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "生成总结报告",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            }
         }
 
         // --- Semantic Search Section ---
@@ -401,6 +517,25 @@ fun TimelineScreen(viewModel: WorkLogViewModel) {
                     MarkdownText(
                         markdown = if (log.summaryMarkdown.isNotBlank()) log.summaryMarkdown else "AI总结尚未生成，可在主页点击“立即AI整理”自动生成。\n\n原始数据：\n${log.rawNotes}"
                     )
+                }
+
+                if (log != null && (log.summaryMarkdown.isNotBlank() || log.rawNotes.isNotBlank())) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.setReportStartDate(log.date)
+                            viewModel.setReportEndDate(log.date)
+                            onNavigateToReport()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("timeline_log_generate_report_btn"),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("基于此日期生成总结报告")
+                    }
                 }
             }
         }
