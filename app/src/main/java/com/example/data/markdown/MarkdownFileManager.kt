@@ -124,15 +124,26 @@ class MarkdownFileManager(private val context: Context) {
         }
     }
 
+    data class RawNoteEntry(
+        val id: String,
+        val dateStr: String,
+        val content: String
+    )
+
     private val rawNotesLock = Any()
 
     // --- Type 2: Raw Notes Document (temp/raw_notes.md) ---
 
-    fun appendRawNote(text: String, dateStr: String) = synchronized(rawNotesLock) {
+    fun appendRawNote(
+        text: String,
+        dateStr: String,
+        entryId: String = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+    ): String = synchronized(rawNotesLock) {
         val file = rawNotesFile
         file.parentFile?.mkdirs()
-        val entry = "\n\n### [$dateStr] 原始输入\n$text\n"
+        val entry = "\n\n### [$dateStr] [id:$entryId] 原始输入\n$text\n"
         file.appendText(entry)
+        entryId
     }
 
     fun getRawNotesContent(): String = synchronized(rawNotesLock) {
@@ -140,46 +151,119 @@ class MarkdownFileManager(private val context: Context) {
         if (file.exists()) file.readText() else ""
     }
 
+    fun getRawNoteEntries(dateStr: String? = null): List<RawNoteEntry> = synchronized(rawNotesLock) {
+        val file = rawNotesFile
+        if (!file.exists()) return emptyList()
+        val text = file.readText()
+        val blocks = text.split("\n\n### [")
+        val entries = mutableListOf<RawNoteEntry>()
+        val idRegex = Regex("""\[id:([^\]]+)\]""")
+
+        for (block in blocks.drop(1)) {
+            val headerEnd = block.indexOf("]")
+            if (headerEnd == -1) continue
+            val d = block.substring(0, headerEnd).trim()
+            if (dateStr != null && d != dateStr) continue
+
+            val afterDate = block.substring(headerEnd + 1)
+            val idMatch = idRegex.find(afterDate)
+            val id = idMatch?.groupValues?.get(1).orEmpty()
+
+            val content = if (afterDate.contains("原始输入\n")) {
+                afterDate.substringAfter("原始输入\n").trimEnd()
+            } else {
+                afterDate.substringAfter("\n").trimEnd()
+            }
+            if (content.isNotBlank()) {
+                entries.add(RawNoteEntry(id = id, dateStr = d, content = content))
+            }
+        }
+        entries
+    }
+
+    fun removeRawNotesByIds(ids: Set<String>) = synchronized(rawNotesLock) {
+        if (ids.isEmpty()) return@synchronized
+        val file = rawNotesFile
+        if (!file.exists()) return@synchronized
+        val text = file.readText()
+        val blocks = text.split("\n\n### [")
+        val header = blocks.firstOrNull() ?: "# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n"
+        val idRegex = Regex("""\[id:([^\]]+)\]""")
+
+        val remaining = blocks.drop(1).filterNot { block ->
+            val headerEnd = block.indexOf("]")
+            if (headerEnd == -1) return@filterNot false
+            val afterDate = block.substring(headerEnd + 1)
+            val idMatch = idRegex.find(afterDate)
+            val id = idMatch?.groupValues?.get(1)
+            id != null && ids.contains(id)
+        }
+
+        val newContent = if (remaining.isEmpty()) {
+            "# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n"
+        } else {
+            if (header.endsWith("\n\n")) header + "### [" + remaining.joinToString("\n\n### [")
+            else header + "\n\n### [" + remaining.joinToString("\n\n### [")
+        }
+        file.parentFile?.mkdirs()
+        file.writeText(newContent)
+    }
+
     /**
      * Removes raw notes for a date.
      * If [specificContentToRemove] is provided (e.g. from a specific summary snapshot),
      * only entries exactly matching those target items are removed, preserving any concurrently added
-     * notes, substring variations (e.g. 'deploy module A' vs 'module A'), and unsummarized entries (N-37).
+     * notes, substring variations (e.g. 'deploy module A' vs 'module A'), multiline notes, and unsummarized entries (N-37).
      */
     fun removeRawNotesForDate(dateStr: String, specificContentToRemove: String? = null) = synchronized(rawNotesLock) {
         val file = rawNotesFile
         if (!file.exists()) return@synchronized
         val text = file.readText()
-        val tag = "### [$dateStr] 原始输入"
-        if (!text.contains(tag)) return@synchronized
+        if (!text.contains(dateStr)) return@synchronized
 
         val blocks = text.split("\n\n### [")
         val header = blocks.firstOrNull() ?: "# 临时原始输入文档\n> AI总结后将自动清理对应日期的内容。\n\n"
 
-        // Prepare list of exact normalized items to remove (supports multiple lines and frequency consumption)
+        // Prepare list of exact normalized items to remove, preserving multiline item boundaries
         val targetsToRemove: MutableList<String>? = specificContentToRemove?.let { content ->
-            content.lines()
-                .map { it.trim().removePrefix("•").removePrefix("-").removePrefix("*").trim() }
-                .filter { it.isNotBlank() }
-                .toMutableList()
+            val rawItems = if (content.contains("•") || content.trimStart().startsWith("-") || content.trimStart().startsWith("*")) {
+                content.split(Regex("""(?m)^[•\-\*]\s*"""))
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+            } else {
+                listOf(content.trim())
+            }
+            rawItems.toMutableList()
         }
 
         val remaining = blocks.drop(1).filterNot { block ->
-            if (!block.startsWith("$dateStr] 原始输入")) {
+            val headerEnd = block.indexOf("]")
+            if (headerEnd == -1) return@filterNot false
+            val d = block.substring(0, headerEnd).trim()
+            if (d != dateStr) {
                 false
             } else {
                 if (targetsToRemove == null) {
                     true
                 } else {
-                    val blockContent = block.substringAfter("$dateStr] 原始输入\n").trim()
+                    val afterDate = block.substring(headerEnd + 1)
+                    val blockContent = if (afterDate.contains("原始输入\n")) {
+                        afterDate.substringAfter("原始输入\n").trim()
+                    } else {
+                        afterDate.substringAfter("\n").trim()
+                    }
                     val normalizedBlock = blockContent.lines()
                         .map { it.trim().removePrefix("•").removePrefix("-").removePrefix("*").trim() }
                         .filter { it.isNotBlank() }
                         .joinToString("\n")
 
-                    // Match exact entry or line to remove, consuming one instance to preserve duplicates
+                    // Match exact multiline entry or normalized block, consuming one instance to preserve duplicates
                     val matchIdx = targetsToRemove.indexOfFirst { target ->
-                        normalizedBlock == target || blockContent == target
+                        val normalizedTarget = target.lines()
+                            .map { it.trim().removePrefix("•").removePrefix("-").removePrefix("*").trim() }
+                            .filter { it.isNotBlank() }
+                            .joinToString("\n")
+                        normalizedBlock == target || blockContent == target || normalizedBlock == normalizedTarget
                     }
                     if (matchIdx != -1) {
                         targetsToRemove.removeAt(matchIdx)

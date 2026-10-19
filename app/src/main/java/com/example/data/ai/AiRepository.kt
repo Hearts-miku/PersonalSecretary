@@ -18,6 +18,16 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+open class AiTruncatedException(
+    val partialContent: String,
+    message: String = "AI 输出因达到最大 Token 长度限制而被截断，未完成全部输出"
+) : Exception(message)
+
+open class AiReasoningOnlyException(
+    val reasoningContent: String,
+    message: String = "AI 仅返回思考推理过程，未生成正式正文"
+) : Exception(message)
+
 /**
  * 统一的 AI 模型调用与提示词处理仓库。
  * 基于标准 OpenAI 兼容接口协议，支持各类自定义模型端点。
@@ -61,6 +71,37 @@ open class AiRepository {
                 return Result.failure(IllegalArgumentException("未配置模型名称。请输入有效的模型标识。"))
             }
             return Result.success(Unit)
+        }
+
+        /**
+         * 解析 OpenAI 兼容 Chat 响应（N-40）。
+         * 严格区分 final / partial (length 截断) / reasoning-only (思考过程)：
+         * - finish_reason == 'length' 时明确返回 AiTruncatedException，禁止当成完整正文保存；
+         * - content 为空但 reasoning_content 非空时明确返回 AiReasoningOnlyException，禁止将思考草稿当成正文写入；
+         * - 仅当具有有效正式 content 且未因长度截断时才视为成功。
+         */
+        fun parseOpenAiChatResponse(responseStr: String): Result<String> {
+            val resJson = JSONObject(responseStr)
+            val choices = resJson.optJSONArray("choices")
+            if (choices != null && choices.length() > 0) {
+                val firstChoice = choices.getJSONObject(0)
+                val finishReason = firstChoice.optString("finish_reason", "")
+                val message = firstChoice.optJSONObject("message")
+                val content = message?.optString("content", "")?.trim().orEmpty()
+                val reasoningContent = message?.optString("reasoning_content", "")?.trim().orEmpty()
+
+                if (finishReason == "length") {
+                    return Result.failure(AiTruncatedException(content))
+                }
+                if (content.isBlank()) {
+                    if (reasoningContent.isNotBlank()) {
+                        return Result.failure(AiReasoningOnlyException(reasoningContent))
+                    }
+                    return Result.failure(Exception("AI 未返回有效内容"))
+                }
+                return Result.success(content)
+            }
+            return Result.failure(Exception("AI 未返回有效内容"))
         }
     }
 
@@ -199,27 +240,7 @@ open class AiRepository {
                 return Result.failure(Exception(errorMsg))
             }
 
-            val resJson = JSONObject(responseStr)
-            val choices = resJson.optJSONArray("choices")
-            if (choices != null && choices.length() > 0) {
-                val firstChoice = choices.getJSONObject(0)
-                val finishReason = firstChoice.optString("finish_reason", "")
-                val message = firstChoice.optJSONObject("message")
-                val content = message?.optString("content", "")?.trim().orEmpty()
-                val reasoningContent = message?.optString("reasoning_content", "")?.trim().orEmpty()
-                val effectiveContent = if (content.isNotBlank()) content else reasoningContent
-
-                if (effectiveContent.isNotBlank()) {
-                    if (finishReason == "length") {
-                        return Result.success(effectiveContent + "\n\n> ⚠️ *（提示：受单次模型输出 Token 限制，报告已部分截断，以上为已提炼完整内容）*")
-                    }
-                    return Result.success(effectiveContent)
-                }
-                if (finishReason == "length") {
-                    return Result.failure(Exception("AI 输出因达到最大 Token 长度限制且未返回可用文本"))
-                }
-            }
-            Result.failure(Exception("AI 未返回有效内容"))
+            parseOpenAiChatResponse(responseStr)
         }
     }
 
@@ -415,7 +436,7 @@ open class AiRepository {
     /**
      * AI 功能 6：基于职业履历全貌一键生成求职简历。
      */
-    suspend fun generateUserResume(
+    open suspend fun generateUserResume(
         careerProfileMarkdown: String,
         templateStyle: String = "Modern",
         settings: UserSettingsEntity? = null

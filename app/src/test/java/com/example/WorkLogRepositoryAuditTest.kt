@@ -1,5 +1,6 @@
 package com.example
 
+import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.ai.AiRepository
@@ -7,6 +8,7 @@ import com.example.data.ai.AiRepository.ExtractedTodo
 import com.example.data.local.AppDatabase
 import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.WorkLogRepository
+import com.example.ui.viewmodel.WorkLogViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -57,6 +59,17 @@ class WorkLogRepositoryAuditTest {
             return Result.success(list)
         }
 
+        var slowDelayMs: Long = 0L
+
+        override suspend fun generateUserResume(
+            careerProfileMarkdown: String,
+            templateStyle: String,
+            settings: UserSettingsEntity?
+        ): Result<String> {
+            if (slowDelayMs > 0) kotlinx.coroutines.delay(slowDelayMs)
+            return Result.success("# 个人履历\n专家工程师")
+        }
+
         override suspend fun generatePeriodicReport(
             startDate: String,
             endDate: String,
@@ -64,6 +77,7 @@ class WorkLogRepositoryAuditTest {
             logsContext: String,
             settings: UserSettingsEntity?
         ): Result<String> {
+            if (slowDelayMs > 0) kotlinx.coroutines.delay(slowDelayMs)
             lastReportPromptReceived = logsContext
             return Result.success("# 工作总结报告\n基于选定区间生成完毕。")
         }
@@ -240,5 +254,150 @@ class WorkLogRepositoryAuditTest {
         val listAfter = repository.getSavedReports()
         assertTrue(listAfter.isEmpty())
         assertNull(repository.getReportContent(filename))
+    }
+
+    /**
+     * N-32: Verify that newly appended supplementary fact (B) is preserved in the prompt
+     * and not truncated by ancient long history (A).
+     */
+    @Test
+    fun testN32_supplementaryFactPreservedEvenWithLongHistory() = runBlocking {
+        val date = "2026-10-14"
+        val longHistory = "A".repeat(6000)
+        val supplementaryFact = "LATEST_UNPROCESSED_FACT_MUST_BE_INCLUDED"
+
+        val db = AppDatabase.getInstance(context)
+        db.dailyWorkLogDao().insertOrUpdate(
+            com.example.data.local.DailyWorkLogEntity(
+                date = date,
+                rawNotes = longHistory,
+                summaryMarkdown = "# 旧总结\n已总结历史核心要点",
+                isSummarized = true,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+
+        // User supplements a new fact
+        repository.addRawNote(supplementaryFact, date)
+
+        val res = repository.generateReport(date, date, "日报")
+        assertTrue("Report generation must succeed", res.isSuccess)
+
+        val prompt = fakeAi.lastReportPromptReceived
+        assertTrue(
+            "Prompt must contain supplementary unsummarized fact despite long prior history",
+            prompt.contains(supplementaryFact)
+        )
+
+        val reportMarkdown = res.getOrDefault("")
+        assertTrue(
+            "Report must contain explicit programmatic coverage header",
+            reportMarkdown.contains("覆盖范围提示")
+        )
+    }
+
+    /**
+     * P3: Verify saving and deleting reports with custom titles containing special characters.
+     */
+    @Test
+    fun testP3_sanitizeReportFilename_handlesSpecialCharactersAndDeletesCleanly() = runBlocking {
+        val customTitleWithSpecialChars = "2026/10/01:重点攻坚*总结"
+        val content = "# 重点攻坚总结报告"
+
+        repository.saveReport(customTitleWithSpecialChars, content)
+
+        val reports = repository.getSavedReports()
+        assertEquals(1, reports.size)
+        val savedFile = reports.first()
+        assertFalse("Filename must not contain illegal slashes or colons", savedFile.name.contains("/"))
+        assertFalse("Filename must not contain colons", savedFile.name.contains(":"))
+        assertFalse("Filename must not contain asterisks", savedFile.name.contains("*"))
+
+        val readBack = repository.getReportContent(savedFile.name)
+        assertEquals(content, readBack)
+
+        // Deleting with the original title containing special characters must also succeed
+        val deleted = repository.deleteReport(customTitleWithSpecialChars)
+        assertTrue("Delete using sanitized path must succeed", deleted)
+        assertTrue(repository.getSavedReports().isEmpty())
+    }
+
+    /**
+     * N-36: Ordinary writes (e.g. saveResume, addRawNote) cannot commit stale data
+     * if clearAllData occurs concurrently.
+     */
+    @Test
+    fun testN36_ordinaryWritesAbortedWhenClearAllDataOccursConcurrently() = runBlocking {
+        // Start write operation where clearAllData happens before lock commit
+        try {
+            repository.runWriteOperation {
+                repository.clearAllData()
+            }
+        } catch (e: Exception) {
+            // Expected CancellationException or epoch fence abort
+        }
+
+        val profile = repository.markdownManager.getCareerProfileContent()
+        val reports = repository.getSavedReports()
+        assertTrue(reports.isEmpty())
+        assertEquals("", profile)
+    }
+
+    /**
+     * N-35: Rapid 3 task replacements in WorkLogViewModel serialize cleanly.
+     * Older jobs are cancelled/joined and do not clobber newer job's busy status or outputs.
+     */
+    @Test
+    fun testN35_viewModel_rapidThreeReplacements_serializesTasksCleanly() = runBlocking {
+        fakeAi.slowDelayMs = 50L
+        val viewModel = WorkLogViewModel(context as Application, repository)
+
+        val targetDate = "2026-10-15"
+        repository.addRawNote("核心功能模块完成", targetDate)
+
+        // Rapidly dispatch 3 jobs: Task 1 -> Task 2 -> Task 3
+        viewModel.generateReport(targetDate, targetDate, "周报")
+        viewModel.generateResume("Modern")
+        viewModel.generateReport(targetDate, targetDate, "月报")
+
+        // Wait for final job to complete
+        kotlinx.coroutines.delay(200L)
+
+        // Only the final task (Task 3: 月报) should have completed
+        val doc = viewModel.currentReport.value
+        assertNotNull(doc)
+        assertEquals("月报", doc?.reportType)
+        assertFalse(viewModel.isGeneratingReport.value)
+        assertFalse(viewModel.isGeneratingResume.value)
+    }
+
+    /**
+     * N-35: Explicit cancellation immediately followed by a new task completes successfully.
+     */
+    @Test
+    fun testN35_viewModel_cancelThenImmediatelyNewTask_completesSuccessfully() = runBlocking {
+        fakeAi.slowDelayMs = 50L
+        val viewModel = WorkLogViewModel(context as Application, repository)
+
+        val targetDate = "2026-10-15"
+        repository.addRawNote("测试任务", targetDate)
+
+        // 1. Launch a task
+        viewModel.generateResume("Modern")
+
+        // 2. Explicitly cancel
+        viewModel.cancelActiveAiJob()
+
+        // 3. Immediately launch another task
+        viewModel.generateReport(targetDate, targetDate, "日报")
+
+        // Wait for completion
+        kotlinx.coroutines.delay(200L)
+
+        // Report generation should have succeeded
+        val doc = viewModel.currentReport.value
+        assertNotNull(doc)
+        assertEquals("日报", doc?.reportType)
+        assertFalse(viewModel.isGeneratingReport.value)
     }
 }

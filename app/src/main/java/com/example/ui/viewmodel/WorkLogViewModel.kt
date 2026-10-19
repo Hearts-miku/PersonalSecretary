@@ -14,6 +14,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicLong
 
@@ -26,9 +27,12 @@ data class ReportDocument(
     val filename: String
 )
 
-class WorkLogViewModel(application: Application) : AndroidViewModel(application) {
+class WorkLogViewModel @JvmOverloads constructor(
+    application: Application,
+    customRepo: WorkLogRepository? = null
+) : AndroidViewModel(application) {
 
-    val repository = WorkLogRepository(application)
+    val repository = customRepo ?: WorkLogRepository(application)
 
     // UI Input States
     private val _rawInputText = MutableStateFlow("")
@@ -81,12 +85,15 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     ): Job {
         val previousJob = activeAiJob
         val token = activeJobToken.incrementAndGet()
-        val newJob = viewModelScope.launch {
+        val newJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             try {
-                if (previousJob != null && previousJob.isActive) {
-                    previousJob.cancelAndJoin()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    if (previousJob != null && !previousJob.isCompleted) {
+                        previousJob.cancel()
+                        previousJob.join()
+                    }
                 }
-                if (activeJobToken.get() != token) return@launch
+                if (!isActive || activeJobToken.get() != token) return@launch
                 statusSetter?.invoke(true)
                 block(token)
             } catch (e: CancellationException) {
@@ -97,7 +104,9 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                     showSnack("任务执行失败: ${e.message}")
                 }
             } finally {
-                statusSetter?.invoke(false)
+                if (activeJobToken.get() == token) {
+                    statusSetter?.invoke(false)
+                }
             }
         }
         activeAiJob = newJob
@@ -130,9 +139,9 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     val savedReportFiles: StateFlow<List<java.io.File>> = _savedReportFiles.asStateFlow()
 
     fun cancelActiveAiJob() {
-        val job = activeAiJob
-        activeAiJob = null
         activeJobToken.incrementAndGet()
+        val job = activeAiJob
+        job?.cancel()
         _isProcessingAI.value = false
         _isGeneratingResume.value = false
         _isGeneratingWorkExp.value = false
@@ -142,9 +151,6 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         _isSearchingLogs.value = false
         _isTestingConnection.value = false
         _aiStatusMessage.value = ""
-        viewModelScope.launch {
-            job?.cancelAndJoin()
-        }
         showSnack("已取消当前 AI 任务")
     }
 
@@ -365,8 +371,13 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
                 val title = file.nameWithoutExtension
                 _generatedReportMarkdown.value = content
                 val match = Regex("""^(\d{4}-\d{2}-\d{2})_至_(\d{4}-\d{2}-\d{2})_(.+)$""").find(title)
-                val startDate = match?.groupValues?.get(1) ?: _reportStartDate.value
-                val endDate = match?.groupValues?.get(2) ?: _reportEndDate.value
+                val contentDates = Regex("""(?m)^###\s*日期:\s*(\d{4}-\d{2}-\d{2})""").findAll(content).map { it.groupValues[1] }.toList()
+                val startDate = match?.groupValues?.get(1)
+                    ?: contentDates.firstOrNull()
+                    ?: _reportStartDate.value
+                val endDate = match?.groupValues?.get(2)
+                    ?: contentDates.lastOrNull()
+                    ?: _reportEndDate.value
                 val type = match?.groupValues?.get(3) ?: _reportType.value
                 _currentReport.value = ReportDocument(
                     title = title,
@@ -394,31 +405,34 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
         }
         viewModelScope.launch {
             val cur = _currentReport.value
-            val title = customTitle?.ifBlank { null }
+            val rawTitle = customTitle?.ifBlank { null }
                 ?: cur?.title
                 ?: "${_reportStartDate.value}_至_${_reportEndDate.value}_${_reportType.value}"
-            val filename = "${title}.md"
-            repository.saveReport(filename, content)
-            _currentReport.value = cur?.copy(title = title, filename = filename) ?: ReportDocument(
-                title = title,
+            val safeFileName = repository.markdownManager.sanitizeReportFileName(rawTitle)
+            val normalizedTitle = safeFileName.removeSuffix(".md")
+            repository.saveReport(safeFileName, content)
+            _currentReport.value = cur?.copy(title = normalizedTitle, filename = safeFileName) ?: ReportDocument(
+                title = normalizedTitle,
                 startDate = _reportStartDate.value,
                 endDate = _reportEndDate.value,
                 reportType = _reportType.value,
                 content = content,
-                filename = filename
+                filename = safeFileName
             )
             loadSavedReports()
-            showSnack("报告已保存为 $filename")
+            showSnack("报告已保存为 $safeFileName")
         }
     }
 
     fun deleteReport(filename: String) {
         viewModelScope.launch {
-            val success = repository.deleteReport(filename)
+            val safeFileName = repository.markdownManager.sanitizeReportFileName(filename)
+            val success = repository.deleteReport(safeFileName)
             if (success) {
                 val cur = _currentReport.value
-                val baseTitle = filename.removeSuffix(".md")
-                if (cur?.filename == filename || cur?.title == baseTitle || cur?.title == filename) {
+                val baseTitle = safeFileName.removeSuffix(".md")
+                val curSafe = cur?.filename?.let { repository.markdownManager.sanitizeReportFileName(it) }
+                if (curSafe == safeFileName || cur?.filename == filename || cur?.title == baseTitle || cur?.title == filename) {
                     _currentReport.value = null
                     _generatedReportMarkdown.value = ""
                 }
@@ -773,41 +787,33 @@ class WorkLogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun clearAllData() {
-        val job = activeAiJob
-        activeAiJob = null
-        activeJobToken.incrementAndGet()
-        viewModelScope.launch {
-            try {
-                if (job != null && job.isActive) {
-                    job.cancelAndJoin()
-                }
+        launchExclusiveJob {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 repository.clearAllData()
-                _rawInputText.value = ""
-                _resumeMarkdown.value = ""
-                _editingProfileText.value = null
-                _editingWorkExpText.value = null
-                _editingProjectExpText.value = null
-                _generatedReportMarkdown.value = ""
-                _currentReport.value = null
-                _savedReportFiles.value = emptyList()
-                _searchResults.value = emptyList()
-                _searchQuery.value = ""
-                _lastDeletedTodo.value = null
-                _isProcessingAI.value = false
-                _isGeneratingResume.value = false
-                _isGeneratingWorkExp.value = false
-                _isGeneratingProjectExp.value = false
-                _isGeneratingReport.value = false
-                _isImportingFile.value = false
-                _isSearchingLogs.value = false
-                _isTestingConnection.value = false
-                _aiStatusMessage.value = ""
-                loadMdInfo()
-                loadSavedReports()
-                showSnack("所有记录的数据已清空")
-            } catch (e: Exception) {
-                showSnack("清空失败: ${e.message}")
             }
+            _rawInputText.value = ""
+            _resumeMarkdown.value = ""
+            _editingProfileText.value = null
+            _editingWorkExpText.value = null
+            _editingProjectExpText.value = null
+            _generatedReportMarkdown.value = ""
+            _currentReport.value = null
+            _savedReportFiles.value = emptyList()
+            _searchResults.value = emptyList()
+            _searchQuery.value = ""
+            _lastDeletedTodo.value = null
+            _isProcessingAI.value = false
+            _isGeneratingResume.value = false
+            _isGeneratingWorkExp.value = false
+            _isGeneratingProjectExp.value = false
+            _isGeneratingReport.value = false
+            _isImportingFile.value = false
+            _isSearchingLogs.value = false
+            _isTestingConnection.value = false
+            _aiStatusMessage.value = ""
+            loadMdInfo()
+            loadSavedReports()
+            showSnack("所有记录的数据已清空")
         }
     }
 }

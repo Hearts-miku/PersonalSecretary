@@ -10,7 +10,10 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class AiRepositoryValidationTest {
 
     private val repository = AiRepository()
@@ -168,5 +171,150 @@ class AiRepositoryValidationTest {
         assertEquals("Line2 Modified", diff[2].text)
         assertEquals(DiffType.UNCHANGED, diff[3].type)
         assertEquals("Line3", diff[3].text)
+    }
+
+    @Test
+    fun testN40_reasoningOnlyResponseIsRejectedAsFailure() {
+        val jsonStr = """
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "reasoning_content": "INTERNAL_DRAFT_NOT_FINAL"
+                        }
+                    }
+                ]
+            }
+        """.trimIndent()
+        val result = AiRepository.parseOpenAiChatResponse(jsonStr)
+        assertTrue("Reasoning-only response must be treated as failure", result.isFailure)
+        assertTrue(result.exceptionOrNull() is com.example.data.ai.AiReasoningOnlyException)
+        assertTrue(result.exceptionOrNull()?.message?.contains("思考推理") == true)
+    }
+
+    @Test
+    fun testN40_truncatedResponseIsRejectedAsFailure() {
+        val jsonStr = """
+            {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "role": "assistant",
+                            "content": "这是一份未生成完整的被截断报告..."
+                        }
+                    }
+                ]
+            }
+        """.trimIndent()
+        val result = AiRepository.parseOpenAiChatResponse(jsonStr)
+        assertTrue("Truncated length response must be treated as failure", result.isFailure)
+        val ex = result.exceptionOrNull()
+        assertTrue(ex is com.example.data.ai.AiTruncatedException)
+        assertEquals("这是一份未生成完整的被截断报告...", (ex as com.example.data.ai.AiTruncatedException).partialContent)
+    }
+
+    @Test
+    fun testN40_validFinalResponseIsAccepted() {
+        val jsonStr = """
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": "# 工作日报\n今天完成了核心模块构建与测试。"
+                        }
+                    }
+                ]
+            }
+        """.trimIndent()
+        val result = AiRepository.parseOpenAiChatResponse(jsonStr)
+        assertTrue("Valid response must be accepted as success", result.isSuccess)
+        assertEquals("# 工作日报\n今天完成了核心模块构建与测试。", result.getOrNull())
+    }
+
+    @Test
+    fun testN40_realAiRepositoryWithLocalServer_reasoningOnlyFails() = runBlocking {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        try {
+            server.createContext("/chat/completions") { exchange ->
+                val json = """
+                    {
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "reasoning_content": "INTERNAL_DRAFT_NOT_FINAL"
+                                }
+                            }
+                        ]
+                    }
+                """.trimIndent().toByteArray(Charsets.UTF_8)
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, json.size.toLong())
+                exchange.responseBody.use { it.write(json) }
+            }
+            server.start()
+
+            val port = server.address.port
+            val settings = UserSettingsEntity(
+                baseUrl = "http://127.0.0.1:$port",
+                apiKey = "test-key-fake",
+                selectedModel = "test-model"
+            )
+
+            val res = repository.generateContent(prompt = "test prompt", settings = settings)
+            assertTrue("Reasoning-only response over real HTTP socket must be failure", res.isFailure)
+            assertTrue(res.exceptionOrNull() is com.example.data.ai.AiReasoningOnlyException)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun testN40_realAiRepositoryWithLocalServer_truncatedFails() = runBlocking {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        try {
+            server.createContext("/chat/completions") { exchange ->
+                val json = """
+                    {
+                        "choices": [
+                            {
+                                "finish_reason": "length",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "半截文本..."
+                                }
+                            }
+                        ]
+                    }
+                """.trimIndent().toByteArray(Charsets.UTF_8)
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, json.size.toLong())
+                exchange.responseBody.use { it.write(json) }
+            }
+            server.start()
+
+            val port = server.address.port
+            val settings = UserSettingsEntity(
+                baseUrl = "http://127.0.0.1:$port",
+                apiKey = "test-key-fake",
+                selectedModel = "test-model"
+            )
+
+            val res = repository.generateContent(prompt = "test prompt", settings = settings)
+            assertTrue("Truncated length response over real HTTP socket must be failure", res.isFailure)
+            val ex = res.exceptionOrNull()
+            assertTrue(ex is com.example.data.ai.AiTruncatedException)
+            assertEquals("半截文本...", (ex as com.example.data.ai.AiTruncatedException).partialContent)
+        } finally {
+            server.stop(0)
+        }
     }
 }

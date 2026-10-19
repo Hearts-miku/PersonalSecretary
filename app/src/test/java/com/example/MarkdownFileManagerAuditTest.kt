@@ -181,4 +181,51 @@ class MarkdownFileManagerAuditTest {
         val deleteAgain = manager.deleteReport(title1)
         assertFalse("Deleting non-existent report must return false", deleteAgain)
     }
+
+    /**
+     * N-37: Verify that multiline raw notes are properly cleaned up and not permanently retained.
+     */
+    @Test
+    fun testN37_multilineRawNoteIsRemovedCorrectly() {
+        val date = "2026-10-08"
+        val multilineNote = "line one\nline two"
+        manager.appendRawNote(multilineNote, date)
+
+        val before = manager.getRawNotesContent()
+        assertTrue("Must contain multiline content", before.contains("line one\nline two"))
+
+        manager.removeRawNotesForDate(date, "• line one\nline two")
+
+        val after = manager.getRawNotesContent()
+        assertFalse("Multiline raw note must be cleanly removed", after.contains("line one"))
+        assertFalse("Multiline raw note second line must also be removed", after.contains("line two"))
+    }
+
+    /**
+     * N-37: Verify ID-based removal cleanly preserves duplicate text added across batches.
+     */
+    @Test
+    fun testN37_rawNoteEntriesTrackingByIdsPreservesCrossBatchDuplicates() {
+        val date = "2026-10-09"
+        // Batch 1: note A
+        val idA = manager.appendRawNote("开发了登录页面", date)
+        val batch1Entries = manager.getRawNoteEntries(date)
+        assertEquals(1, batch1Entries.size)
+        assertEquals(idA, batch1Entries.first().id)
+
+        // User concurrently adds note B and another identical note A before summary finishes
+        val idB = manager.appendRawNote("补录了用户设置", date)
+        val idA2 = manager.appendRawNote("开发了登录页面", date)
+
+        // Summary for Batch 1 completes, removing only batch 1's IDs
+        manager.removeRawNotesByIds(setOf(idA))
+
+        val remainingEntries = manager.getRawNoteEntries(date)
+        assertEquals(2, remainingEntries.size)
+        assertEquals(listOf(idB, idA2), remainingEntries.map { it.id })
+
+        val content = manager.getRawNotesContent()
+        assertTrue("Must preserve note B", content.contains("补录了用户设置"))
+        assertTrue("Must preserve new identical note A from batch 2", content.contains("开发了登录页面"))
+    }
 }

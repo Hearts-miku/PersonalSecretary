@@ -36,6 +36,16 @@ class WorkLogRepository(
     private val repositoryMutex = Mutex()
     private val dataEpoch = AtomicLong(0L)
 
+    suspend fun <T> runWriteOperation(block: suspend () -> T): T {
+        val startEpoch = dataEpoch.get()
+        return repositoryMutex.withLock {
+            if (dataEpoch.get() != startEpoch) {
+                throw CancellationException("Operation aborted because data was cleared concurrently")
+            }
+            block()
+        }
+    }
+
     // Flows for UI
     val allLogsFlow: Flow<List<DailyWorkLogEntity>> = logDao.getAllLogs()
     val allTodosFlow: Flow<List<TodoItemEntity>> = todoDao.getAllTodos()
@@ -118,7 +128,9 @@ class WorkLogRepository(
     }
 
     suspend fun saveResume(content: String) = withContext(Dispatchers.IO) {
-        markdownManager.writeGeneratedResume(content)
+        runWriteOperation {
+            markdownManager.writeGeneratedResume(content)
+        }
     }
 
     // --- Page 1: Raw Input Handling ---
@@ -126,11 +138,11 @@ class WorkLogRepository(
     suspend fun addRawNote(input: String, dateStr: String = getTodayString()) = withContext(Dispatchers.IO) {
         if (input.isBlank()) return@withContext
 
-        // 1. Write to Type 2 Markdown File (temp/raw_notes.md) - thread-safe in MarkdownFileManager
-        markdownManager.appendRawNote(input, dateStr)
+        runWriteOperation {
+            // 1. Write to Type 2 Markdown File (temp/raw_notes.md) - thread-safe in MarkdownFileManager
+            markdownManager.appendRawNote(input, dateStr)
 
-        // 2. Atomically update Room DB under repositoryMutex
-        repositoryMutex.withLock {
+            // 2. Atomically update Room DB under the same lock and epoch fence (N-36)
             val existing = logDao.getLogByDate(dateStr)
             val newRaw = if (existing != null && existing.rawNotes.isNotBlank()) {
                 "${existing.rawNotes}\n• $input"
@@ -157,6 +169,10 @@ class WorkLogRepository(
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
             val startEpoch = dataEpoch.get()
+            // N-37: Capture currently pending raw note IDs to prevent cross-batch duplicate deletion
+            val pendingEntries = markdownManager.getRawNoteEntries(targetDate)
+            val pendingIds = pendingEntries.map { it.id }.filter { it.isNotBlank() }.toSet()
+
             onProgress("正在读取待处理工作记录...")
             val logEntity = logDao.getLogByDate(targetDate)
             val isInputFromSummary = logEntity?.rawNotes.isNullOrBlank() && !logEntity?.summaryMarkdown.isNullOrBlank()
@@ -298,7 +314,9 @@ class WorkLogRepository(
             withContext(NonCancellable) {
                 repositoryMutex.withLock {
                     if (dataEpoch.get() == startEpoch) {
-                        if (snapshotRawNotes.isNotBlank()) {
+                        if (pendingIds.isNotEmpty()) {
+                            markdownManager.removeRawNotesByIds(pendingIds)
+                        } else if (snapshotRawNotes.isNotBlank()) {
                             markdownManager.removeRawNotesForDate(targetDate, snapshotRawNotes)
                         } else if (!hasConcurrentNotes) {
                             markdownManager.removeRawNotesForDate(targetDate)
@@ -328,33 +346,36 @@ class WorkLogRepository(
         }
 
         val sb = StringBuilder()
-        val maxChars = 16000
+        val maxChars = 20000
         var currentChars = 0
         var hasFactContent = false
         val includedDates = mutableListOf<String>()
         var isAnyEntryTruncated = false
 
-        // N-32: Dynamic fair budget allocation per entry based on number of logs
-        val maxPerEntry = (maxChars / logs.size).coerceIn(800, 4000)
+        // N-32: Dynamic fair budget allocation per entry based on number of logs (avoid premature break on >20 days)
+        val maxPerEntry = (maxChars / logs.size).coerceIn(200, 4000)
 
         for (log in logs) {
             // N-31 & N-32: Allocate budget to both summary and supplementary notes
             val summaryText = log.summaryMarkdown.trim()
             val rawNotesText = log.rawNotes.trim()
+            val pendingEntries = markdownManager.getRawNoteEntries(log.date)
+            val pendingNotesText = pendingEntries.joinToString("\n") { it.content }.trim()
 
             val entryBody = when {
-                summaryText.isNotBlank() && rawNotesText.isNotBlank() -> {
-                    // Divide budget fairly between summary and supplementary unsummarized notes (2:1 ratio)
-                    val summaryBudget = (maxPerEntry * 2) / 3
-                    val rawBudget = maxPerEntry - summaryBudget
-                    val sPart = if (summaryText.length > summaryBudget) {
+                summaryText.isNotBlank() && (pendingNotesText.isNotBlank() || rawNotesText.isNotBlank()) -> {
+                    val candidateNotes = if (pendingNotesText.isNotBlank()) pendingNotesText else rawNotesText
+                    val halfBudget = maxPerEntry / 2
+                    val sPart = if (summaryText.length > halfBudget) {
                         isAnyEntryTruncated = true
-                        summaryText.take(summaryBudget) + "..."
+                        summaryText.take(halfBudget) + "..."
                     } else summaryText
-                    val rPart = if (rawNotesText.length > rawBudget) {
+
+                    val rawBudget = (maxPerEntry - sPart.length).coerceAtLeast(halfBudget)
+                    val rPart = if (candidateNotes.length > rawBudget) {
                         isAnyEntryTruncated = true
-                        rawNotesText.take(rawBudget) + "..."
-                    } else rawNotesText
+                        "..." + candidateNotes.takeLast(rawBudget)
+                    } else candidateNotes
                     "$sPart\n\n#### 【当日补录待整理记录】\n$rPart"
                 }
                 summaryText.isNotBlank() -> {
@@ -364,10 +385,11 @@ class WorkLogRepository(
                     } else summaryText
                 }
                 else -> {
-                    if (rawNotesText.length > maxPerEntry) {
+                    val candidateNotes = if (pendingNotesText.isNotBlank()) pendingNotesText else rawNotesText
+                    if (candidateNotes.length > maxPerEntry) {
                         isAnyEntryTruncated = true
-                        rawNotesText.take(maxPerEntry) + "..."
-                    } else rawNotesText
+                        "..." + candidateNotes.takeLast(maxPerEntry)
+                    } else candidateNotes
                 }
             }
 
@@ -399,11 +421,25 @@ class WorkLogRepository(
 
         val fullInputContext = coverageHeader + sb.toString()
         val settings = getSettings()
-        aiRepository.generatePeriodicReport(actualStart, actualEnd, reportType, fullInputContext, settings)
+        val aiRes = aiRepository.generatePeriodicReport(actualStart, actualEnd, reportType, fullInputContext, settings)
+        if (aiRes.isSuccess) {
+            val rawReport = aiRes.getOrDefault("")
+            val trimmedNotice = coverageHeader.trim()
+            val boundReport = if (rawReport.contains("覆盖范围提示") || rawReport.contains("覆盖区间")) {
+                rawReport
+            } else {
+                "$trimmedNotice\n\n$rawReport"
+            }
+            Result.success(boundReport)
+        } else {
+            aiRes
+        }
     }
 
     suspend fun saveReport(filename: String, content: String) = withContext(Dispatchers.IO) {
-        markdownManager.writeReport(filename, content)
+        runWriteOperation {
+            markdownManager.writeReport(filename, content)
+        }
     }
 
     suspend fun getSavedReports(): List<java.io.File> = withContext(Dispatchers.IO) {
@@ -415,7 +451,9 @@ class WorkLogRepository(
     }
 
     suspend fun deleteReport(filename: String): Boolean = withContext(Dispatchers.IO) {
-        markdownManager.deleteReport(filename)
+        runWriteOperation {
+            markdownManager.deleteReport(filename)
+        }
     }
 
     suspend fun generateResume(templateStyle: String): Result<String> = withContext(Dispatchers.IO) {
@@ -451,6 +489,7 @@ class WorkLogRepository(
     }
 
     suspend fun generateWorkExperiences(): Result<String> = withContext(Dispatchers.IO) {
+        val startEpoch = dataEpoch.get()
         val profileMd = markdownManager.getCareerProfileContent()
         val recentLogs = getRecentLogsContext()
         val combinedContext = "$profileMd\n\n## 近期日常工作日志总结概览\n$recentLogs"
@@ -460,35 +499,42 @@ class WorkLogRepository(
         // Save old version if exists and no versions saved yet
         val existingVersions = versionDao.getVersionsByType("WORK")
         if (current.workExperiences.isNotBlank() && existingVersions.isEmpty()) {
-            versionDao.insertVersion(
-                ExperienceVersionEntity(
-                    type = "WORK",
-                    content = current.workExperiences,
-                    timestamp = current.lastUpdated,
-                    summaryNote = "初始备份版本"
+            runWriteOperation {
+                versionDao.insertVersion(
+                    ExperienceVersionEntity(
+                        type = "WORK",
+                        content = current.workExperiences,
+                        timestamp = current.lastUpdated,
+                        summaryNote = "初始备份版本"
+                    )
                 )
-            )
+            }
         }
 
         val res = aiRepository.generateWorkExperiences(combinedContext, settings)
         if (res.isSuccess) {
             val content = res.getOrDefault("")
-            markdownManager.writeWorkExperiences(content)
-            profileDao.insertOrUpdateProfile(current.copy(workExperiences = content, lastUpdated = System.currentTimeMillis()))
-            // Save new version
-            versionDao.insertVersion(
-                ExperienceVersionEntity(
-                    type = "WORK",
-                    content = content,
-                    timestamp = System.currentTimeMillis(),
-                    summaryNote = "AI 提炼版本"
-                )
-            )
+            runWriteOperation {
+                if (dataEpoch.get() == startEpoch) {
+                    markdownManager.writeWorkExperiences(content)
+                    profileDao.insertOrUpdateProfile(current.copy(workExperiences = content, lastUpdated = System.currentTimeMillis()))
+                    // Save new version
+                    versionDao.insertVersion(
+                        ExperienceVersionEntity(
+                            type = "WORK",
+                            content = content,
+                            timestamp = System.currentTimeMillis(),
+                            summaryNote = "AI 提炼版本"
+                        )
+                    )
+                }
+            }
         }
         res
     }
 
     suspend fun generateProjectExperiences(): Result<String> = withContext(Dispatchers.IO) {
+        val startEpoch = dataEpoch.get()
         val profileMd = markdownManager.getCareerProfileContent()
         val recentLogs = getRecentLogsContext()
         val combinedContext = "$profileMd\n\n## 近期日常工作日志总结概览\n$recentLogs"
@@ -498,159 +544,185 @@ class WorkLogRepository(
         // Save old version if exists and no versions saved yet
         val existingVersions = versionDao.getVersionsByType("PROJECT")
         if (current.projectExperiences.isNotBlank() && existingVersions.isEmpty()) {
-            versionDao.insertVersion(
-                ExperienceVersionEntity(
-                    type = "PROJECT",
-                    content = current.projectExperiences,
-                    timestamp = current.lastUpdated,
-                    summaryNote = "初始备份版本"
+            runWriteOperation {
+                versionDao.insertVersion(
+                    ExperienceVersionEntity(
+                        type = "PROJECT",
+                        content = current.projectExperiences,
+                        timestamp = current.lastUpdated,
+                        summaryNote = "初始备份版本"
+                    )
                 )
-            )
+            }
         }
 
         val res = aiRepository.generateProjectExperiences(combinedContext, settings)
         if (res.isSuccess) {
             val content = res.getOrDefault("")
-            markdownManager.writeProjectExperiences(content)
-            profileDao.insertOrUpdateProfile(current.copy(projectExperiences = content, lastUpdated = System.currentTimeMillis()))
-            // Save new version
-            versionDao.insertVersion(
-                ExperienceVersionEntity(
-                    type = "PROJECT",
-                    content = content,
-                    timestamp = System.currentTimeMillis(),
-                    summaryNote = "AI 提取版本"
-                )
-            )
+            runWriteOperation {
+                if (dataEpoch.get() == startEpoch) {
+                    markdownManager.writeProjectExperiences(content)
+                    profileDao.insertOrUpdateProfile(current.copy(projectExperiences = content, lastUpdated = System.currentTimeMillis()))
+                    // Save new version
+                    versionDao.insertVersion(
+                        ExperienceVersionEntity(
+                            type = "PROJECT",
+                            content = content,
+                            timestamp = System.currentTimeMillis(),
+                            summaryNote = "AI 提取版本"
+                        )
+                    )
+                }
+            }
         }
         res
     }
 
     suspend fun restoreExperienceVersion(version: ExperienceVersionEntity) = withContext(Dispatchers.IO) {
-        val profileMd = markdownManager.getCareerProfileContent()
-        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
-        if (version.type == "WORK") {
-            markdownManager.writeWorkExperiences(version.content)
-            profileDao.insertOrUpdateProfile(current.copy(workExperiences = version.content, lastUpdated = System.currentTimeMillis()))
-        } else if (version.type == "PROJECT") {
-            markdownManager.writeProjectExperiences(version.content)
-            profileDao.insertOrUpdateProfile(current.copy(projectExperiences = version.content, lastUpdated = System.currentTimeMillis()))
-        } else if (version.type == "PROFILE") {
-            markdownManager.writeCareerProfile(version.content)
-            profileDao.insertOrUpdateProfile(current.copy(markdownContent = version.content, lastUpdated = System.currentTimeMillis()))
+        runWriteOperation {
+            val profileMd = markdownManager.getCareerProfileContent()
+            val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+            if (version.type == "WORK") {
+                markdownManager.writeWorkExperiences(version.content)
+                profileDao.insertOrUpdateProfile(current.copy(workExperiences = version.content, lastUpdated = System.currentTimeMillis()))
+            } else if (version.type == "PROJECT") {
+                markdownManager.writeProjectExperiences(version.content)
+                profileDao.insertOrUpdateProfile(current.copy(projectExperiences = version.content, lastUpdated = System.currentTimeMillis()))
+            } else if (version.type == "PROFILE") {
+                markdownManager.writeCareerProfile(version.content)
+                profileDao.insertOrUpdateProfile(current.copy(markdownContent = version.content, lastUpdated = System.currentTimeMillis()))
+            }
         }
     }
 
     suspend fun deleteExperienceVersion(id: Int) = withContext(Dispatchers.IO) {
-        versionDao.deleteVersionById(id)
+        runWriteOperation {
+            versionDao.deleteVersionById(id)
+        }
     }
 
     suspend fun importWorkExperiences(content: String, sourceFileName: String) = withContext(Dispatchers.IO) {
-        val profileMd = markdownManager.getCareerProfileContent()
-        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
-        markdownManager.writeWorkExperiences(content)
-        profileDao.insertOrUpdateProfile(current.copy(workExperiences = content, lastUpdated = System.currentTimeMillis()))
-        versionDao.insertVersion(
-            ExperienceVersionEntity(
-                type = "WORK",
-                content = content,
-                timestamp = System.currentTimeMillis(),
-                summaryNote = "文件导入: $sourceFileName"
+        runWriteOperation {
+            val profileMd = markdownManager.getCareerProfileContent()
+            val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+            markdownManager.writeWorkExperiences(content)
+            profileDao.insertOrUpdateProfile(current.copy(workExperiences = content, lastUpdated = System.currentTimeMillis()))
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "WORK",
+                    content = content,
+                    timestamp = System.currentTimeMillis(),
+                    summaryNote = "文件导入: $sourceFileName"
+                )
             )
-        )
+        }
     }
 
     suspend fun importProjectExperiences(content: String, sourceFileName: String) = withContext(Dispatchers.IO) {
-        val profileMd = markdownManager.getCareerProfileContent()
-        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
-        markdownManager.writeProjectExperiences(content)
-        profileDao.insertOrUpdateProfile(current.copy(projectExperiences = content, lastUpdated = System.currentTimeMillis()))
-        versionDao.insertVersion(
-            ExperienceVersionEntity(
-                type = "PROJECT",
-                content = content,
-                timestamp = System.currentTimeMillis(),
-                summaryNote = "文件导入: $sourceFileName"
+        runWriteOperation {
+            val profileMd = markdownManager.getCareerProfileContent()
+            val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+            markdownManager.writeProjectExperiences(content)
+            profileDao.insertOrUpdateProfile(current.copy(projectExperiences = content, lastUpdated = System.currentTimeMillis()))
+            versionDao.insertVersion(
+                ExperienceVersionEntity(
+                    type = "PROJECT",
+                    content = content,
+                    timestamp = System.currentTimeMillis(),
+                    summaryNote = "文件导入: $sourceFileName"
+                )
             )
-        )
+        }
     }
 
     // --- Todo Actions ---
 
     suspend fun setTodoCompleted(id: Int, isCompleted: Boolean) = withContext(Dispatchers.IO) {
-        todoDao.setCompleted(id, isCompleted)
+        runWriteOperation {
+            todoDao.setCompleted(id, isCompleted)
+        }
     }
 
     suspend fun addTodo(todo: TodoItemEntity) = withContext(Dispatchers.IO) {
-        todoDao.insertTodo(todo)
+        runWriteOperation {
+            todoDao.insertTodo(todo)
+        }
     }
 
     suspend fun deleteTodo(id: Int) = withContext(Dispatchers.IO) {
-        todoDao.deleteById(id)
+        runWriteOperation {
+            todoDao.deleteById(id)
+        }
     }
 
     suspend fun updateCareerProfileManually(newContent: String) = withContext(Dispatchers.IO) {
-        val profileMd = newContent
-        markdownManager.writeCareerProfile(profileMd)
-        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
-        if (current.markdownContent.isNotBlank()) {
-            versionDao.insertVersion(
-                ExperienceVersionEntity(
-                    type = "PROFILE",
-                    content = current.markdownContent,
-                    timestamp = System.currentTimeMillis(),
-                    summaryNote = "手动保存前备份"
+        runWriteOperation {
+            val profileMd = newContent
+            markdownManager.writeCareerProfile(profileMd)
+            val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = profileMd)
+            if (current.markdownContent.isNotBlank()) {
+                versionDao.insertVersion(
+                    ExperienceVersionEntity(
+                        type = "PROFILE",
+                        content = current.markdownContent,
+                        timestamp = System.currentTimeMillis(),
+                        summaryNote = "手动保存前备份"
+                    )
+                )
+            }
+            profileDao.insertOrUpdateProfile(
+                current.copy(
+                    markdownContent = newContent,
+                    lastUpdated = System.currentTimeMillis()
                 )
             )
         }
-        profileDao.insertOrUpdateProfile(
-            current.copy(
-                markdownContent = newContent,
-                lastUpdated = System.currentTimeMillis()
-            )
-        )
     }
 
     suspend fun updateWorkExperiencesManually(newContent: String) = withContext(Dispatchers.IO) {
-        markdownManager.writeWorkExperiences(newContent)
-        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = markdownManager.getCareerProfileContent())
-        if (current.workExperiences.isNotBlank()) {
-            versionDao.insertVersion(
-                ExperienceVersionEntity(
-                    type = "WORK",
-                    content = current.workExperiences,
-                    timestamp = System.currentTimeMillis(),
-                    summaryNote = "手动保存前备份"
+        runWriteOperation {
+            markdownManager.writeWorkExperiences(newContent)
+            val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = markdownManager.getCareerProfileContent())
+            if (current.workExperiences.isNotBlank()) {
+                versionDao.insertVersion(
+                    ExperienceVersionEntity(
+                        type = "WORK",
+                        content = current.workExperiences,
+                        timestamp = System.currentTimeMillis(),
+                        summaryNote = "手动保存前备份"
+                    )
+                )
+            }
+            profileDao.insertOrUpdateProfile(
+                current.copy(
+                    workExperiences = newContent,
+                    lastUpdated = System.currentTimeMillis()
                 )
             )
         }
-        profileDao.insertOrUpdateProfile(
-            current.copy(
-                workExperiences = newContent,
-                lastUpdated = System.currentTimeMillis()
-            )
-        )
     }
 
     suspend fun updateProjectExperiencesManually(newContent: String) = withContext(Dispatchers.IO) {
-        markdownManager.writeProjectExperiences(newContent)
-        val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = markdownManager.getCareerProfileContent())
-        if (current.projectExperiences.isNotBlank()) {
-            versionDao.insertVersion(
-                ExperienceVersionEntity(
-                    type = "PROJECT",
-                    content = current.projectExperiences,
-                    timestamp = System.currentTimeMillis(),
-                    summaryNote = "手动保存前备份"
+        runWriteOperation {
+            markdownManager.writeProjectExperiences(newContent)
+            val current = profileDao.getProfile() ?: UserCareerProfileEntity(id = 1, markdownContent = markdownManager.getCareerProfileContent())
+            if (current.projectExperiences.isNotBlank()) {
+                versionDao.insertVersion(
+                    ExperienceVersionEntity(
+                        type = "PROJECT",
+                        content = current.projectExperiences,
+                        timestamp = System.currentTimeMillis(),
+                        summaryNote = "手动保存前备份"
+                    )
+                )
+            }
+            profileDao.insertOrUpdateProfile(
+                current.copy(
+                    projectExperiences = newContent,
+                    lastUpdated = System.currentTimeMillis()
                 )
             )
         }
-        profileDao.insertOrUpdateProfile(
-            current.copy(
-                projectExperiences = newContent,
-                lastUpdated = System.currentTimeMillis()
-            )
-        )
     }
 
     // --- Semantic Search ---
